@@ -135,6 +135,24 @@ bool waterFound = false;
 double waterYaw = 0, waterPitch = 0;
 double waterAnchorX = 0, waterAnchorY = 0, waterAnchorZ = 0;
 
+// --lookdown: after warmup, pin the player's pitch ~70° down (look into a ravine /
+// at water from above) WITHOUT moving the spawn position, so the DX12 look-down
+// artifact is reproduced deterministically on both backends (same view).
+// --look <yaw> <pitch> (radians): pin an exact look direction instead.
+bool lookDown = Array.Exists(args, a => a == "--lookdown");
+double? lookYaw = null, lookPitch = null;
+if (Array.IndexOf(args, "--look") is int lki && lki >= 0 && lki + 2 < args.Length &&
+    double.TryParse(args[lki + 1], out var lyaw) && double.TryParse(args[lki + 2], out var lpitch))
+{ lookYaw = lyaw; lookPitch = lpitch; }
+
+// --tp <x> <y> <z>: teleport the player to a fixed world position after warmup
+// (used with --lookdown to frame the known problematic look-down spot).
+double? tpX = null, tpY = null, tpZ = null;
+if (Array.IndexOf(args, "--tp") is int tpi && tpi >= 0 && tpi + 3 < args.Length &&
+    double.TryParse(args[tpi + 1], out var tx2) && double.TryParse(args[tpi + 2], out var ty2) &&
+    double.TryParse(args[tpi + 3], out var tz2))
+{ tpX = tx2; tpY = ty2; tpZ = tz2; }
+
 // Sun shadow-map pass: ON BY DEFAULT on both Vulkan and DX12. The depth image is
 // double-buffered per in-flight frame so frame N's shadow write never races frame
 // N-1's still-in-flight sample (the cross-frame hazard that used to force shadows
@@ -502,6 +520,21 @@ window.Render += dt =>
             wtp.yaw = waterYaw; wtp.prevYaw = waterYaw;
             wtp.pitch = waterPitch; wtp.prevPitch = waterPitch;
         }
+    }
+
+    // --lookdown / --look: pin the camera pitch (and optionally yaw) after warmup so
+    // a steep look-down view over terrain/water is reproduced deterministically on
+    // both backends. Freezes the player in place (no gravity drift) so VK and DX12
+    // capture the exact same frame.
+    if ((lookDown || lookYaw != null || tpX != null) && game != null && game.hasWorld() && game.player is { } ldp
+        && frameNo >= Math.Min(screenshotWarmupFrames, 150))
+    {
+        ldp.noGravity = true; ldp.vx = ldp.vy = ldp.vz = 0;
+        if (tpX != null) ldp.setPos(tpX.Value, tpY!.Value, tpZ!.Value);
+        double yaw = lookYaw ?? ldp.yaw;
+        double pitch = lookPitch ?? (70.0 * Math.PI / 180.0);   // ~70° down
+        ldp.yaw = yaw; ldp.prevYaw = yaw;
+        ldp.pitch = pitch; ldp.prevPitch = pitch;
     }
 
     // --skylook: aim the camera up toward the sun's azimuth so the gradient sky +

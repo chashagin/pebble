@@ -2866,8 +2866,14 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         samplers[0] = new StaticSamplerDesc
         {
             Filter = Filter.MinMagMipPoint,
-            AddressU = TextureAddressMode.Clamp,
-            AddressV = TextureAddressMode.Clamp,
+            // U/V WRAP (not clamp): the greedy mesher emits tile-local UVs that span
+            // 0..w / 0..h (up to 0..16) across a merged quad, expecting the per-tile
+            // texture to REPEAT across it. Clamping smeared the edge texel into long
+            // streaks on large merged top faces — most visible looking straight down
+            // at terrain (the DX12-only "gray sheets" artifact). Matches the Vulkan
+            // atlas sampler (Repeat U/V). W stays Clamp: it selects the array layer.
+            AddressU = TextureAddressMode.Wrap,
+            AddressV = TextureAddressMode.Wrap,
             AddressW = TextureAddressMode.Clamp,
             MipLODBias = 0,
             MaxAnisotropy = 1,

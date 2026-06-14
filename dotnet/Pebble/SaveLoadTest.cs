@@ -38,7 +38,7 @@ internal static class SaveLoadTest
             if (!ok) fails++;
         }
 
-        string worldId = "";
+        string? worldId = "";
         int chestX = 0, chestY = 0, chestZ = 0;
         int furnX = 0, furnY = 0, furnZ = 0;
 
@@ -147,7 +147,7 @@ internal static class SaveLoadTest
     /// Create a world, place a chest (17 diamonds) + furnace (coal fuel, raw_iron
     /// input, burnTime=100) just above spawn, and return the world id. Out params
     /// give the placed block-entity positions.
-    private static string PlaceWorld(GameCore g,
+    private static string? PlaceWorld(GameCore g,
         out int chestX, out int chestY, out int chestZ,
         out int furnX, out int furnY, out int furnZ)
     {
