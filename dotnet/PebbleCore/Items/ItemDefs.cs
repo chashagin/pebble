@@ -11,6 +11,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 
 namespace PebbleCore;
 
@@ -145,6 +146,9 @@ public struct StackData : IEquatable<StackData>
     /// firework flight duration
     public int? flight;
 
+    // Computed, read-only — keep it out of the save JSON (it's derived, and writing
+    // it just bloats every stack and risks a phantom member on read).
+    [JsonIgnore]
     public bool isEmpty =>
         potion == null && trim == null && sherds == null && charged == null
             && priorWork == null && repairUnits == null && contents == null
@@ -221,6 +225,15 @@ public sealed class ItemStack : IEquatable<ItemStack>
     public List<EnchInstance> ench;
     public string label;
     public StackData data;
+
+    // Parameterless ctor for System.Text.Json (save round-trip). With IncludeFields,
+    // the deserializer constructs via this ctor then sets the public fields directly,
+    // so `items`/`disc`/`item` arrays and StackData.contents (List<ItemStack>) all
+    // round-trip. `ench` is seeded non-null so an older save that omitted it (or any
+    // other path that leaves it unset) still satisfies the engine's invariant that
+    // every stack has an ench list. Engine code keeps using the (int id, …) ctor.
+    [JsonConstructor]
+    public ItemStack() { this.ench = new List<EnchInstance>(); }
 
     public ItemStack(int id, int count = 1, int damage = 0, List<EnchInstance> ench = null, string label = null, StackData data = default)
     {

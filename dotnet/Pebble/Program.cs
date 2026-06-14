@@ -32,6 +32,27 @@ if (Array.Exists(args, a => a == "--audiotest"))
     Environment.Exit(Pebble.Audio.AudioTest.Run());
 }
 
+// --saveloadtest: headless proof of the SAVE -> LOAD round-trip with block
+// entities. Creates a world, places a chest + furnace with real ItemStacks,
+// saveAndFlush(synchronous), then constructs a FRESH GameCore and loadWorld()s
+// the same id (the title -> Singleplayer -> click-a-world path). Asserts no
+// exception, the chest BE survives at its position with its 17 diamonds, and the
+// furnace BE survives. This is the gap that was never exercised (createWorld +
+// --screen game only). Writes to the real save DB and deletes the test world after.
+if (Array.Exists(args, a => a == "--saveloadtest"))
+{
+    Environment.Exit(SaveLoadTest.Run());
+}
+
+// --seedworld: headless — create a world with a chest + furnace (with items),
+// save it, and exit. Honours PEBBLE_SUPPORT_DIR so a test harness can stage a
+// loadable world in a scratch DB, then launch the windowed app with --loadlast
+// pointed at the same dir to verify the real SAVE -> LOAD app flow.
+if (Array.Exists(args, a => a == "--seedworld"))
+{
+    Environment.Exit(SaveLoadTest.Seed());
+}
+
 bool useDx12 =
     Array.Exists(args, a => a is "--dx12" or "--d3d12") ||
     (Array.IndexOf(args, "--backend") is int bi && bi >= 0 && bi + 1 < args.Length &&
@@ -65,6 +86,19 @@ string? forceScreen = null;
 if (Array.IndexOf(args, "--screen") is int fsi && fsi >= 0 && fsi + 1 < args.Length)
     forceScreen = args[fsi + 1];
 bool forceScreenApplied = false;
+
+// --loadlast: after boot, load the most-recently-played saved world and enter it
+// (the real title -> Singleplayer -> click-saved-world path) instead of opening
+// the title screen. Used to verify the SAVE -> LOAD path in the actual app. If no
+// saved world exists, it falls back to the title screen.
+bool loadLast = Array.Exists(args, a => a == "--loadlast");
+bool loadLastApplied = false;
+
+// --loadid <id>: like --loadlast but loads a specific saved world id (used to
+// verify loading a particular world, e.g. one with corrupt/lost chunks).
+string? loadId = null;
+if (Array.IndexOf(args, "--loadid") is int lidi && lidi >= 0 && lidi + 1 < args.Length)
+    loadId = args[lidi + 1];
 
 // --spawntest: after warmup, spawn a few mobs in front of the player and aim the
 // camera at them, so the entity render pass is guaranteed something visible to
@@ -230,6 +264,39 @@ window.Render += dt =>
     // Drive the engine: tick + stream meshes (frame() pumps the main queue,
     // ticks at fixed 20 Hz, and streams section meshes to host.uploadMesh).
     double partial = game?.frame(dt * 1000.0) ?? 0;
+
+    // --loadlast / --loadid: load a saved world and enter it, mirroring title ->
+    // Singleplayer -> clicking a saved world (the SAVE -> LOAD path).
+    if ((loadLast || loadId != null) && !loadLastApplied && game != null && frameNo >= 5)
+    {
+        loadLastApplied = true;
+        var saved = game.listWorlds();
+        if (saved.Count == 0)
+        {
+            Console.WriteLine("[Pebble] --loadlast: no saved worlds found — staying on title screen");
+        }
+        else
+        {
+            string id;
+            string name;
+            if (loadId != null)
+            {
+                var match = saved.Find(s => s.id == loadId);
+                id = match.id ?? loadId;
+                name = match.name ?? "(unknown)";
+            }
+            else
+            {
+                saved.Sort((a, b) => b.lastPlayed.CompareTo(a.lastPlayed));
+                id = saved[0].id;
+                name = saved[0].name;
+            }
+            Console.WriteLine($"[Pebble] --loadlast: loading '{name}' (id={id})");
+            ui.CloseAll(game);
+            game.loadWorld(id);   // the crash path: loadWorld -> enterWorld -> adoptChunkBlockEntities
+            Console.WriteLine($"[Pebble] --loadlast: entered world = {game.hasWorld()}");
+        }
+    }
 
     // --screen <name>: force a screen open shortly after boot for screenshots.
     if (forceScreen != null && !forceScreenApplied && game != null && frameNo >= 5)

@@ -106,11 +106,23 @@ public static class SettingsGlobals
 
     public static Settings defaultSettings() { return new Settings(); }
 
-    /// ~/Library/Application Support/Pebble — created on first touch
+    /// ~/Library/Application Support/Pebble — created on first touch.
+    /// PEBBLE_SUPPORT_DIR overrides the location (used by headless tests so they
+    /// write to a scratch DB instead of the player's real saves). Unset → the
+    /// normal per-user path, identical to before.
     public static string vcSupportDir()
     {
-        var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var dir = Path.Combine(baseDir, "Pebble");
+        var overrideDir = Environment.GetEnvironmentVariable("PEBBLE_SUPPORT_DIR");
+        string dir;
+        if (!string.IsNullOrEmpty(overrideDir))
+        {
+            dir = overrideDir;
+        }
+        else
+        {
+            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            dir = Path.Combine(baseDir, "Pebble");
+        }
         try { Directory.CreateDirectory(dir); } catch { }
         return dir;
     }

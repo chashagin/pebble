@@ -990,19 +990,16 @@ public sealed class GameCore
         // once a full record exists on disk, every rewrite must stay full —
         // the autosave clears `modified` but the blocks no longer regenerate
         savedFullKeys.Add(key);
-        // deep-copy block entities — live BEs keep mutating while the save
-        // queue serializes, and BlockEntityData is a reference type
-        List<BlockEntityData> besCopy = null;
-        var besLive = c.blockEntities.Values.ToList();
-        try
-        {
-            var json = JsonSerializer.SerializeToUtf8Bytes(besLive);
-            besCopy = JsonSerializer.Deserialize<List<BlockEntityData>>(json);
-        }
-        catch { besCopy = null; }
+        // deep-copy block entities — live BEs keep mutating while the save queue
+        // serializes, and both BlockEntityData and its ItemStacks are reference
+        // types. (The previous JSON round-trip used default serializer options,
+        // which DON'T serialize public fields, so every BE collapsed to `{}` and
+        // came back with type==null — corrupting the save and crashing the load.)
+        var besCopy = new List<BlockEntityData>(c.blockEntities.Count);
+        foreach (var be in c.blockEntities.Values) besCopy.Add(be.copy());
         return new ChunkRecord(
             key: key, worldId: worldId, dim: (int)d, cx: c.cx, cz: c.cz,
-            blocks: c.blocks, biomes: c.biomes, blockEntities: besCopy ?? besLive, entities: ents);
+            blocks: c.blocks, biomes: c.biomes, blockEntities: besCopy, entities: ents);
     }
 
     // ===========================================================================

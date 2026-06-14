@@ -552,7 +552,10 @@ public sealed class World
         var c = getChunkAt(be.x, be.z);
         if (c == null) return;
         c.setBlockEntity(posMod(be.x, CHUNK_W), be.y, posMod(be.z, CHUNK_W), be);
-        if (beTickHandlers.ContainsKey(be.type))
+        // Swift's BlockEntityData.type is non-optional, so for valid data this guard
+        // is always true (identical behavior). It only short-circuits a malformed or
+        // legacy save whose `type` decoded as null, which must not crash the load.
+        if (be.type != null && beTickHandlers.ContainsKey(be.type))
         {
             trackTickingBE(be);
         }
@@ -564,7 +567,9 @@ public sealed class World
         foreach (var kv in c.blockEntities.OrderBy(p => p.Key))
         {
             var be = kv.Value;
-            if (beTickHandlers.ContainsKey(be.type)) trackTickingBE(be);
+            // type is non-optional in Swift; guard only protects against a malformed
+            // or legacy save whose `type` decoded as null (faithful for valid data).
+            if (be.type != null && beTickHandlers.ContainsKey(be.type)) trackTickingBE(be);
         }
     }
     public void releaseChunkBlockEntities(Chunk c)

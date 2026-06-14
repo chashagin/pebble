@@ -88,6 +88,32 @@ public sealed class BlockEntityData
         this.y = y;
         this.z = z;
     }
+
+    /// Deep copy for the save queue. Live BEs keep mutating while the queue
+    /// serializes (the chest/furnace inventory the player is using), and both
+    /// BlockEntityData and its ItemStacks are reference types, so the contained
+    /// stacks must be cloned too. Strings are immutable; the primitive arrays
+    /// (`lines`/`sherds`/`times`) are cloned so a later edit can't reach the
+    /// snapshot. All other fields are value types / nullable value types.
+    public BlockEntityData copy()
+    {
+        var c = (BlockEntityData)MemberwiseClone();
+        c.items = CopyStacks(items);
+        c.disc = disc?.copy();
+        c.item = item?.copy();
+        if (lines != null) c.lines = (string[])lines.Clone();
+        if (sherds != null) c.sherds = (string[])sherds.Clone();
+        if (times != null) c.times = (int[])times.Clone();
+        return c;
+    }
+
+    private static ItemStack[] CopyStacks(ItemStack[] src)
+    {
+        if (src == null) return null;
+        var dst = new ItemStack[src.Length];
+        for (int i = 0; i < src.Length; i++) dst[i] = src[i]?.copy();
+        return dst;
+    }
 }
 
 public static class BlockEntities
