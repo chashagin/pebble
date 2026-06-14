@@ -67,7 +67,17 @@ public sealed unsafe class D3D12Backend : IGpuBackend
     private ComPtr<IDXGISwapChain3> _swapChain;
     private ComPtr<ID3D12DescriptorHeap> _rtvHeap;
     private readonly ComPtr<ID3D12Resource>[] _renderTargets = new ComPtr<ID3D12Resource>[FrameCount];
-    private ComPtr<ID3D12CommandAllocator> _commandAllocator;
+    // ONE command allocator PER frame-in-flight. A single shared allocator is illegal
+    // here: BeginFrame resets it every frame, but MoveToNextFrame only waits the fence
+    // for the back-buffer index being recycled (FrameCount frames ago), NOT the frame
+    // immediately prior — so a shared allocator could be Reset() while the previous
+    // frame's command list is still executing on the GPU. The D3D12 debug layer flags
+    // that as "command allocator was reset after the command list was recorded" and
+    // removes the device (DXGI_ERROR_INVALID_CALL). It only bites under sustained full
+    // streaming, when GPU frames run long enough for the reset to race ahead of
+    // completion. Per-frame allocators reset allocator[_frameIndex], which
+    // MoveToNextFrame has already fenced — so the reset is always safe.
+    private readonly ComPtr<ID3D12CommandAllocator>[] _commandAllocators = new ComPtr<ID3D12CommandAllocator>[FrameCount];
     private ComPtr<ID3D12GraphicsCommandList> _commandList;
 
     // Dedicated upload list (atlas copy): kept separate from the per-frame list so
@@ -322,6 +332,21 @@ public sealed unsafe class D3D12Backend : IGpuBackend
 
     private readonly Dictionary<(int, int, int), SectionLayers> _sectionCache = new();
 
+    // ── Deferred section-buffer destruction ───────────────────────────────────
+    //
+    // SyncSections releases a section's upload-heap vbuf/ibuf whenever its mesh
+    // changes or the section unloads. But those committed resources may still be
+    // referenced by an in-flight command list (a prior frame's submission whose
+    // fence hasn't signaled yet). Releasing them immediately → the GPU reads freed
+    // memory → DXGI_ERROR_DEVICE_HUNG. Instead we DEFER releases through a ring of
+    // (FrameCount + 1) buckets; a bucket is only released at the start of a later
+    // frame, after MoveToNextFrame has waited the fence guaranteeing the GPU
+    // finished the work submitted FrameCount frames ago. (Same root cause and fix
+    // as the Vulkan backend; mirrors the macOS original's 3-frame-deferred arena.)
+    private const int DeferFreeSlots = (int)FrameCount + 1; // = 3
+    private readonly List<SectionGpu>[] _pendingFree = new List<SectionGpu>[DeferFreeSlots];
+    private int _deferSlot;
+
     // Pending world draw captured during RenderWorld, replayed in EndFrame.
     private bool _haveWorldFrame;
     private PebbleCore.CamState _frameCam;
@@ -529,17 +554,20 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         CreateDepthResources();
         CreatePostResources();
 
-        fixed (ID3D12CommandAllocator** ppAlloc = &_commandAllocator.Handle)
-            ThrowIfFailed(
-                _device.CreateCommandAllocator(CommandListType.Direct, SilkMarshal.GuidPtrOf<ID3D12CommandAllocator>(), (void**)ppAlloc),
-                "CreateCommandAllocator");
+        for (uint i = 0; i < FrameCount; i++)
+        {
+            fixed (ID3D12CommandAllocator** ppAlloc = &_commandAllocators[i].Handle)
+                ThrowIfFailed(
+                    _device.CreateCommandAllocator(CommandListType.Direct, SilkMarshal.GuidPtrOf<ID3D12CommandAllocator>(), (void**)ppAlloc),
+                    "CreateCommandAllocator");
+        }
 
         fixed (ID3D12GraphicsCommandList** ppList = &_commandList.Handle)
             ThrowIfFailed(
                 _device.CreateCommandList(
                     0,
                     CommandListType.Direct,
-                    _commandAllocator,
+                    _commandAllocators[_frameIndex],
                     (ID3D12PipelineState*)null,
                     SilkMarshal.GuidPtrOf<ID3D12GraphicsCommandList>(),
                     (void**)ppList),
@@ -568,6 +596,9 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         _fenceEvent = SilkMarshal.CreateWindowsEvent(null, false, false, null);
         if (_fenceEvent == nint.Zero)
             throw new InvalidOperationException("Failed to create fence event handle.");
+
+        for (int i = 0; i < DeferFreeSlots; i++)
+            _pendingFree[i] = new List<SectionGpu>();
 
         _initialized = true;
 
@@ -767,9 +798,12 @@ public sealed unsafe class D3D12Backend : IGpuBackend
 
         var rtvBase = _hdrRtvHeap.GetCPUDescriptorHandleForHeapStart();
         var srvCpu = _postSrvHeap.GetCPUDescriptorHandleForHeapStart();
+        // Hoisted out of the loop (CA2014): one scratch buffer, refilled each frame
+        // slot, so the stack doesn't grow per iteration.
+        var rts = stackalloc ComPtr<ID3D12Resource>[5];
         for (uint f = 0; f < FrameCount; f++)
         {
-            var rts = stackalloc ComPtr<ID3D12Resource>[5] { _hdrColor[f], _bloomA[f], _bloomB[f], _ultraA[f], _ultraB[f] };
+            rts[0] = _hdrColor[f]; rts[1] = _bloomA[f]; rts[2] = _bloomB[f]; rts[3] = _ultraA[f]; rts[4] = _ultraB[f];
             for (int i = 0; i < 5; i++)
             {
                 var rtvDesc = new RenderTargetViewDesc { Format = SceneRtvFormat, ViewDimension = RtvDimension.Texture2D };
@@ -966,8 +1000,22 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         if (!_initialized)
             return;
 
-        ThrowIfFailed(_commandAllocator.Reset(), "CommandAllocator.Reset");
-        ThrowIfFailed(_commandList.Reset(_commandAllocator, (ID3D12PipelineState*)null), "CommandList.Reset");
+        // The previous frame's MoveToNextFrame already signaled + waited the fence
+        // for this back-buffer index, so the GPU is provably done with the work
+        // submitted FrameCount frames ago. Advance the deferred-free ring and release
+        // the bucket we're about to reuse: those sections were queued (DeferFree)
+        // DeferFreeSlots frames back, so — submissions execute in order — the GPU no
+        // longer references them. Doing this BEFORE any new section frees this frame
+        // is what keeps full streaming (SyncSections releasing thousands of sections)
+        // from device-removing.
+        _deferSlot = (_deferSlot + 1) % DeferFreeSlots;
+        DrainPendingFrees(_deferSlot);
+
+        // Reset THIS frame's allocator (MoveToNextFrame already fenced it) — never a
+        // shared one that the previous, still-in-flight frame may be executing from.
+        var allocator = _commandAllocators[_frameIndex];
+        ThrowIfFailed(allocator.Reset(), "CommandAllocator.Reset");
+        ThrowIfFailed(_commandList.Reset(allocator, (ID3D12PipelineState*)null), "CommandList.Reset");
 
         // Swapchain backbuffer: PRESENT -> RENDER_TARGET (composite writes it later).
         ResourceBarrierTransition(
@@ -3273,6 +3321,9 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         var cam = _frameCam;
         const float r = 72f;
         var shadowVp = _frameShadowMat;
+        // Hoisted out of the (per-section) loop (CA2014): one scratch buffer, refilled
+        // each visible section, so the stack doesn't grow across thousands of sections.
+        var origin = stackalloc float[4];
         foreach (var kv in _sectionCache)
         {
             if (kv.Value.opaque == null) continue;
@@ -3283,7 +3334,7 @@ public sealed unsafe class D3D12Backend : IGpuBackend
             float oz = (float)(cz * 16 - cam.z);
             if (Math.Abs(ox + 8) > r + 24 || Math.Abs(oz + 8) > r + 24) continue;
             if (!FrustumCull.SectionVisible(new Vector3(ox, oy, oz), shadowVp)) continue;
-            var origin = stackalloc float[4] { ox, oy, oz, 0 };
+            origin[0] = ox; origin[1] = oy; origin[2] = oz; origin[3] = 0;
             _commandList.SetGraphicsRoot32BitConstants(1, 4, origin, 0);
             DrawSectionGpu(kv.Value.opaque);
         }
@@ -3353,11 +3404,36 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         return gpu;
     }
 
-    private void FreeSectionGpu(SectionGpu? gpu)
+    /// Immediately release a section's GPU buffers. ONLY safe when the GPU is known
+    /// not to reference them (deferred-free drain after a fence wait, or after a
+    /// full GPU drain in Dispose). Use DeferFreeSectionGpu from the frame loop.
+    private void DestroySectionGpu(SectionGpu? gpu)
     {
         if (gpu == null) return;
         if (gpu.vbuf.Handle != null) { gpu.vbuf.Dispose(); gpu.vbuf = default; }
         if (gpu.ibuf.Handle != null) { gpu.ibuf.Dispose(); gpu.ibuf = default; }
+    }
+
+    /// Queue a section's GPU buffers for release FrameCount frames from now. They
+    /// may still be referenced by an in-flight command list, so they are parked in
+    /// the current ring slot and released by DrainPendingFrees only after a later
+    /// frame's fence wait proves the GPU is done with them.
+    private void DeferFreeSectionGpu(SectionGpu? gpu)
+    {
+        if (gpu == null) return;
+        _pendingFree[_deferSlot].Add(gpu);
+    }
+
+    /// Release everything parked in the given ring slot and clear it. The caller
+    /// must have already waited the fence that guarantees the GPU finished the work
+    /// submitted when this slot was last filled.
+    private void DrainPendingFrees(int slot)
+    {
+        var bucket = _pendingFree[slot];
+        if (bucket == null || bucket.Count == 0) return;
+        for (int i = 0; i < bucket.Count; i++)
+            DestroySectionGpu(bucket[i]);
+        bucket.Clear();
     }
 
     private void SyncSections(HostBridge host)
@@ -3374,9 +3450,9 @@ public sealed unsafe class D3D12Backend : IGpuBackend
 
             if (existing != null)
             {
-                FreeSectionGpu(existing.opaque);
-                FreeSectionGpu(existing.cutout);
-                FreeSectionGpu(existing.translucent);
+                DeferFreeSectionGpu(existing.opaque);
+                DeferFreeSectionGpu(existing.cutout);
+                DeferFreeSectionGpu(existing.translucent);
             }
             var layers = new SectionLayers
             {
@@ -3396,9 +3472,9 @@ public sealed unsafe class D3D12Backend : IGpuBackend
             foreach (var key in dead)
             {
                 var l = _sectionCache[key];
-                FreeSectionGpu(l.opaque);
-                FreeSectionGpu(l.cutout);
-                FreeSectionGpu(l.translucent);
+                DeferFreeSectionGpu(l.opaque);
+                DeferFreeSectionGpu(l.cutout);
+                DeferFreeSectionGpu(l.translucent);
                 _sectionCache.Remove(key);
             }
         }
@@ -3461,6 +3537,11 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         int totalSections = 0, drawnSections = 0;
         bool anyTranslucent = false;
 
+        // Hoisted out of the (per-section) loops below (CA2014): one scratch buffer,
+        // refilled each drawn section, so the stack doesn't grow across thousands of
+        // sections. Reused by both the opaque/cutout and translucent passes.
+        var origin = stackalloc float[4];
+
         foreach (var kv in _sectionCache)
         {
             var (cx, sy, cz) = kv.Key;
@@ -3477,7 +3558,7 @@ public sealed unsafe class D3D12Backend : IGpuBackend
                 continue;
             drawnSections++;
 
-            var origin = stackalloc float[4] { ox, oy, oz, 0 };
+            origin[0] = ox; origin[1] = oy; origin[2] = oz; origin[3] = 0;
             _commandList.SetGraphicsRoot32BitConstants(1, 4, origin, 0);
 
             DrawSectionGpu(kv.Value.opaque);
@@ -3506,7 +3587,7 @@ public sealed unsafe class D3D12Backend : IGpuBackend
                 float oy = (float)(sm.minY + sy * 16 - cam.y);
                 float oz = (float)(cz * 16 - cam.z);
                 if (!FrustumCull.SectionVisible(new Vector3(ox, oy, oz), viewProj)) continue;
-                var origin = stackalloc float[4] { ox, oy, oz, 0 };
+                origin[0] = ox; origin[1] = oy; origin[2] = oz; origin[3] = 0;
                 _commandList.SetGraphicsRoot32BitConstants(1, 4, origin, 0);
                 DrawSectionGpu(kv.Value.translucent);
             }
@@ -4184,11 +4265,17 @@ public sealed unsafe class D3D12Backend : IGpuBackend
             try { WaitForGpu(); } catch { }
         }
 
-        // World renderer resources.
+        // World renderer resources. The GPU is drained above (WaitForGpu), so it's
+        // safe to release immediately. Flush ALL deferred-free buckets first so
+        // nothing parked in the ring leaks, then the live section cache (all three
+        // layers — opaque, cutout, translucent).
+        for (int s = 0; s < DeferFreeSlots; s++)
+            DrainPendingFrees(s);
         foreach (var l in _sectionCache.Values)
         {
-            FreeSectionGpu(l.opaque);
-            FreeSectionGpu(l.cutout);
+            DestroySectionGpu(l.opaque);
+            DestroySectionGpu(l.cutout);
+            DestroySectionGpu(l.translucent);
         }
         _sectionCache.Clear();
 
@@ -4314,8 +4401,8 @@ public sealed unsafe class D3D12Backend : IGpuBackend
 
         _commandList.Dispose();
         _commandList = default;
-        _commandAllocator.Dispose();
-        _commandAllocator = default;
+        for (uint i = 0; i < FrameCount; i++)
+            DisposeCom(ref _commandAllocators[i]);
         DisposeCom(ref _uploadList);
         DisposeCom(ref _uploadAllocator);
 

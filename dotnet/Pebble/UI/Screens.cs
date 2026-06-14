@@ -77,9 +77,10 @@ public class ContainerScreen : Screen
 // =============================================================================
 public sealed class InventoryScreen : ContainerScreen
 {
-    // grid stores null in empty cells (the engine craft helpers tolerate nulls);
-    // declared non-nullable element type so it matches matchCrafting/consume sigs.
-    private readonly List<ItemStack> craftGrid = new() { null!, null!, null!, null! };
+    // grid stores null in empty cells, so the element type is nullable. The engine
+    // craft helpers (matchCrafting/consumeCraftingGrid) take List<ItemStack> but
+    // tolerate null elements internally, so we pass craftGrid! at those call sites.
+    private readonly List<ItemStack?> craftGrid = new() { null, null, null, null };
     private ItemStack? craftResult;
 
     public InventoryScreen()
@@ -131,13 +132,14 @@ public sealed class InventoryScreen : ContainerScreen
     private void ConsumeGrid(GameCore game)
     {
         // engine helper mutates the backing list in place and returns container
-        // items (buckets/bottles) to hand back to the player
-        var returns = consumeCraftingGrid(craftGrid);
+        // items (buckets/bottles) to hand back to the player. The helper tolerates
+        // null grid cells, so craftGrid! bridges the nullable element type.
+        var returns = consumeCraftingGrid(craftGrid!);
         foreach (var r in returns) game.player.give(r);
     }
     private void UpdateResult()
     {
-        craftResult = matchCrafting(craftGrid, 2, 2)?.@out;
+        craftResult = matchCrafting(craftGrid!, 2, 2)?.@out;
     }
     public override void DrawExtra(UIManager ui, GameCore game)
     {
@@ -185,7 +187,9 @@ public sealed class InventoryScreen : ContainerScreen
 // =============================================================================
 public sealed class CraftingScreen : ContainerScreen
 {
-    private readonly List<ItemStack> craftGrid = new(new ItemStack[9]);
+    // Empty cells hold null (nullable element type); engine craft helpers tolerate
+    // nulls and take List<ItemStack>, so we pass craftGrid! at those call sites.
+    private readonly List<ItemStack?> craftGrid = new(new ItemStack?[9]);
     private ItemStack? craftResult;
 
     public CraftingScreen()
@@ -212,7 +216,7 @@ public sealed class CraftingScreen : ContainerScreen
             output: true,
             onTake: _ =>
             {
-                var returns = consumeCraftingGrid(craftGrid);
+                var returns = consumeCraftingGrid(craftGrid!);
                 foreach (var r in returns) game.player.give(r);
                 UpdateResult();
             }));
@@ -220,7 +224,7 @@ public sealed class CraftingScreen : ContainerScreen
     }
     private void UpdateResult()
     {
-        craftResult = matchCrafting(craftGrid, 3, 3)?.@out;
+        craftResult = matchCrafting(craftGrid!, 3, 3)?.@out;
     }
     public override void DrawExtra(UIManager ui, GameCore game)
     {

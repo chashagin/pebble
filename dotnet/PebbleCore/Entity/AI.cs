@@ -1035,7 +1035,8 @@ public class MoveToBlockGoal : Goal
     public readonly double speedMod;
     public readonly int interval;
     public (int, int, int)? targetPos = null;
-    private int tries = 0;
+    // NOTE: the Swift original has a `var tries = 0` here that is never read (canUse
+    // uses a local loop counter); it was dead in the source, so it's omitted here.
     public MoveToBlockGoal(Mob mob, int priority, Func<World, int, int, int, bool> valid,
                            int range = 8, double speedMod = 1, int interval = 40) : base(mob, priority)
     {

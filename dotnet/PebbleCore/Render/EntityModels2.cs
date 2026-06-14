@@ -940,17 +940,9 @@ public static class EntityModels2Globals
                 s.rect(12 + 2, 12 + 5, 2, 2, 0xc8fff0); s.rect(12 + 8, 12 + 5, 2, 2, 0xc8fff0);
                 s.box(48, 0, 2, 18, 2, 0x257575, 0.12);
             }, packTex: new string[] { "entity/squid/glow_squid.png" }));
-        MobModel fishModel(Action<EntitySkin> paint, double scale = 1)
-        {
-            return new MobModel(
-                texW: 32, texH: 32,
-                parts: new ModelPart[] {
-                    part("body", (0, 2, 0), box(-1, 0, -3, 2, 3, 6, 0, 0)),
-                    part("tail", (0, 2, 3), box(0, 0, 0, 0.01, 3, 3, 14, 0), box(-0.5, 1, 0, 1, 1, 2, 14, 8)),
-                    part("finTop", (0, 5, 0), box(0, 0, -1, 0.01, 2, 3, 20, 0)),
-                },
-                anim: "fish", scale: scale, paint: paint);
-        }
+        // NOTE: the Swift original declares a `fishModel` helper here but never calls
+        // it — cod/salmon/pufferfish/tropical fish each define their MobModel inline
+        // below. The dead helper was dropped in the port (it was unused in both).
         M2("cod", new MobModel(
             texW: 32, texH: 32,
             parts: new ModelPart[] {

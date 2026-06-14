@@ -92,7 +92,7 @@ public static class WorldFx
         {
             if (er.dead) continue;
             if (er is not Entity ent) continue;
-            ItemStack stack = null;
+            ItemStack? stack = null;
             double size = 0.45;
             double emissive = 0.0;
             if (ent.type == "item")

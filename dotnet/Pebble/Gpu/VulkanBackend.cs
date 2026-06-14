@@ -113,9 +113,16 @@ public sealed unsafe class VulkanBackend : IGpuBackend
     private CommandPool _commandPool;
     private CommandBuffer[] _commandBuffers = Array.Empty<CommandBuffer>();
 
-    // Per-frame sync.
+    // Per-frame sync. _imageAvailable + _inFlightFences are indexed per frame-in-
+    // flight (we don't know the image index until after acquire). _renderFinished is
+    // indexed per SWAPCHAIN IMAGE (by _imageIndex), NOT per frame-in-flight: a frame
+    // slot can be reused while its previous present (which waits on the signal
+    // semaphore) is still outstanding on a particular image, so reusing a per-frame
+    // semaphore triggers "may still be in use by VkSwapchainKHR". One render-finished
+    // semaphore per image avoids that — it's only reused once that image is
+    // re-acquired, which the acquire fence already serializes.
     private Semaphore[] _imageAvailable = Array.Empty<Semaphore>();
-    private Semaphore[] _renderFinished = Array.Empty<Semaphore>();
+    private Semaphore[] _renderFinished = Array.Empty<Semaphore>(); // one per swapchain image
     private Fence[] _inFlightFences = Array.Empty<Fence>();
 
     // Frame state.
@@ -298,6 +305,7 @@ public sealed unsafe class VulkanBackend : IGpuBackend
     private readonly Framebuffer[] _shadowFramebuffer = new Framebuffer[MaxFramesInFlight];
     private Pipeline _shadowPipeline;
     private DescriptorSetLayout _shadowDescLayout;   // UBO only (binding 0)
+    private DescriptorPool _shadowDescPool;          // owns the per-frame shadow UBO sets
     private PipelineLayout _shadowPipelineLayout;    // shadow-only layout (UBO + push)
     // Per-frame ring so frame N's UBO write doesn't corrupt frame N-1's in-flight read.
     private readonly Buffer[] _shadowUbo = new Buffer[MaxFramesInFlight];
@@ -417,6 +425,23 @@ public sealed unsafe class VulkanBackend : IGpuBackend
     }
 
     private readonly Dictionary<(int, int, int), SectionLayers> _sectionCache = new();
+
+    // ── Deferred section-buffer destruction ───────────────────────────────────
+    //
+    // SyncSections frees a section's GPU vbuf/ibuf whenever its mesh changes or the
+    // section unloads. But those buffers may still be referenced by an in-flight
+    // command buffer (a prior frame's submission whose fence hasn't signaled yet).
+    // Destroying them immediately → GPU reads freed memory → VK_ERROR_DEVICE_LOST.
+    //
+    // Instead we DEFER frees through a ring of (MaxFramesInFlight + 1) buckets. A
+    // section queued for destruction this frame is pushed into the bucket for the
+    // current ring slot; the bucket is only actually destroyed at the start of a
+    // later frame, AFTER the per-frame fence wait guarantees the GPU finished the
+    // work submitted MaxFramesInFlight frames ago. This mirrors the macOS original's
+    // mesh arena, which defers frees 3 frames for exactly this reason.
+    private const int DeferFreeSlots = MaxFramesInFlight + 1; // = 3
+    private readonly List<SectionGpu>[] _pendingFree = new List<SectionGpu>[DeferFreeSlots];
+    private int _deferSlot;
 
     // Pending world draw captured during RenderWorld, replayed inside EndFrame's
     // render pass (kept tiny — just the data the recording loop needs).
@@ -896,14 +921,21 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             };
         }
 
-        var features = new PhysicalDeviceFeatures();
+        // Enable depthBiasClamp so the shadow pipeline's DepthBiasClamp (0.02) is a
+        // legal request rather than a validation error. (Without this, the clamp must
+        // be 0.0.) This feature is universally supported on desktop GPUs.
+        var features = new PhysicalDeviceFeatures
+        {
+            DepthBiasClamp = true,
+        };
 
         string[] deviceExts = { KhrSwapchain.ExtensionName };
         var ppDeviceExts = (byte**)SilkMarshal.StringArrayToPtr(deviceExts);
 
-        string[] validationLayers = { "VK_LAYER_KHRONOS_validation" };
-        var ppLayers = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
-
+        // NOTE: device layers are deprecated and ignored by modern loaders. Passing
+        // a non-zero enabledLayerCount here triggers a validation error
+        // ("enabledLayerCount must be 0"). Instance layers are the only ones that
+        // matter, so leave the device layer list empty (count 0 / pointer null).
         var createInfo = new DeviceCreateInfo
         {
             SType = StructureType.DeviceCreateInfo,
@@ -912,12 +944,9 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             PEnabledFeatures = &features,
             EnabledExtensionCount = (uint)deviceExts.Length,
             PpEnabledExtensionNames = ppDeviceExts,
+            EnabledLayerCount = 0,
+            PpEnabledLayerNames = null,
         };
-        if (_validationEnabled)
-        {
-            createInfo.EnabledLayerCount = (uint)validationLayers.Length;
-            createInfo.PpEnabledLayerNames = ppLayers;
-        }
 
         try
         {
@@ -927,7 +956,6 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         finally
         {
             SilkMarshal.Free((nint)ppDeviceExts);
-            SilkMarshal.Free((nint)ppLayers);
         }
 
         if (!_vk.TryGetDeviceExtension(_instance, _device, out _khrSwapchain))
@@ -1693,8 +1721,10 @@ public sealed unsafe class VulkanBackend : IGpuBackend
 
     private void CreateSyncObjects()
     {
+        for (int i = 0; i < DeferFreeSlots; i++)
+            _pendingFree[i] = new List<SectionGpu>();
+
         _imageAvailable = new Semaphore[MaxFramesInFlight];
-        _renderFinished = new Semaphore[MaxFramesInFlight];
         _inFlightFences = new Fence[MaxFramesInFlight];
 
         var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
@@ -1707,12 +1737,38 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         for (int i = 0; i < MaxFramesInFlight; i++)
         {
             if (_vk.CreateSemaphore(_device, in semaphoreInfo, null, out _imageAvailable[i]) != Result.Success ||
-                _vk.CreateSemaphore(_device, in semaphoreInfo, null, out _renderFinished[i]) != Result.Success ||
                 _vk.CreateFence(_device, in fenceInfo, null, out _inFlightFences[i]) != Result.Success)
             {
                 throw new InvalidOperationException("Failed to create per-frame sync objects.");
             }
         }
+
+        // Render-finished semaphores are per swapchain image; create them now that
+        // the swapchain exists, and recreate them whenever the swapchain is rebuilt.
+        CreateRenderFinishedSemaphores();
+    }
+
+    /// (Re)create one render-finished semaphore per swapchain image. Called from
+    /// CreateSyncObjects (initial) and RecreateSwapchain (the image count may change).
+    private void CreateRenderFinishedSemaphores()
+    {
+        DestroyRenderFinishedSemaphores();
+
+        int n = _swapchainImages.Length;
+        _renderFinished = new Semaphore[n];
+        var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
+        for (int i = 0; i < n; i++)
+        {
+            if (_vk.CreateSemaphore(_device, in semaphoreInfo, null, out _renderFinished[i]) != Result.Success)
+                throw new InvalidOperationException("Failed to create per-image render-finished semaphore.");
+        }
+    }
+
+    private void DestroyRenderFinishedSemaphores()
+    {
+        for (int i = 0; i < _renderFinished.Length; i++)
+            if (_renderFinished[i].Handle != 0) _vk.DestroySemaphore(_device, _renderFinished[i], null);
+        _renderFinished = Array.Empty<Semaphore>();
     }
 
     // ═══════════════════════════════════════════════════════════ World renderer
@@ -2576,8 +2632,7 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         {
             SType = StructureType.DescriptorPoolCreateInfo, PoolSizeCount = 1, PPoolSizes = &poolSize, MaxSets = MaxFramesInFlight,
         };
-        DescriptorPool shadowPool;
-        if (_vk.CreateDescriptorPool(_device, in poolInfo, null, out shadowPool) != Result.Success)
+        if (_vk.CreateDescriptorPool(_device, in poolInfo, null, out _shadowDescPool) != Result.Success)
             throw new InvalidOperationException("vkCreateDescriptorPool (shadow) failed.");
         for (int f = 0; f < MaxFramesInFlight; f++)
         {
@@ -2587,7 +2642,7 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             void* m; _vk.MapMemory(_device, _shadowUboMem[f], 0, uboSize, 0, &m); _shadowUboMapped[f] = m;
             var aiShadow = new DescriptorSetAllocateInfo
             {
-                SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = shadowPool,
+                SType = StructureType.DescriptorSetAllocateInfo, DescriptorPool = _shadowDescPool,
                 DescriptorSetCount = 1, PSetLayouts = &sLayout,
             };
             if (_vk.AllocateDescriptorSets(_device, in aiShadow, out _shadowDescSet[f]) != Result.Success)
@@ -2811,13 +2866,39 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         return gpu;
     }
 
-    private void FreeSectionGpu(SectionGpu? gpu)
+    /// Immediately destroy a section's GPU buffers. ONLY safe when the GPU is known
+    /// to no longer reference them (deferred-free drain after a fence wait, or after
+    /// a full device-idle in cleanup). Use DeferFreeSectionGpu from the frame loop.
+    private void DestroySectionGpu(SectionGpu? gpu)
     {
         if (gpu == null) return;
         if (gpu.vbuf.Handle != 0) _vk.DestroyBuffer(_device, gpu.vbuf, null);
         if (gpu.vmem.Handle != 0) _vk.FreeMemory(_device, gpu.vmem, null);
         if (gpu.ibuf.Handle != 0) _vk.DestroyBuffer(_device, gpu.ibuf, null);
         if (gpu.imem.Handle != 0) _vk.FreeMemory(_device, gpu.imem, null);
+        gpu.vbuf = default; gpu.vmem = default; gpu.ibuf = default; gpu.imem = default;
+    }
+
+    /// Queue a section's GPU buffers for destruction MaxFramesInFlight frames from
+    /// now. The buffers may still be referenced by an in-flight command buffer, so
+    /// they are parked in the current ring slot and destroyed by DrainPendingFrees
+    /// only after a later frame's fence wait proves the GPU is done with them.
+    private void DeferFreeSectionGpu(SectionGpu? gpu)
+    {
+        if (gpu == null) return;
+        _pendingFree[_deferSlot].Add(gpu);
+    }
+
+    /// Destroy everything parked in the given ring slot and clear it. The caller
+    /// must have already waited the fence that guarantees the GPU finished the
+    /// work submitted when this slot was last filled.
+    private void DrainPendingFrees(int slot)
+    {
+        var bucket = _pendingFree[slot];
+        if (bucket.Count == 0) return;
+        for (int i = 0; i < bucket.Count; i++)
+            DestroySectionGpu(bucket[i]);
+        bucket.Clear();
     }
 
     /// Reconcile the GPU section cache with the live host.sections set: upload
@@ -2836,12 +2917,12 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             if (_sectionCache.TryGetValue(key, out var existing) && ReferenceEquals(existing.meshRef, sm))
                 continue; // unchanged
 
-            // New or changed: free old GPU buffers, re-upload.
+            // New or changed: defer-free old GPU buffers (still in flight), re-upload.
             if (existing != null)
             {
-                FreeSectionGpu(existing.opaque);
-                FreeSectionGpu(existing.cutout);
-                FreeSectionGpu(existing.translucent);
+                DeferFreeSectionGpu(existing.opaque);
+                DeferFreeSectionGpu(existing.cutout);
+                DeferFreeSectionGpu(existing.translucent);
             }
             var layers = new SectionLayers
             {
@@ -2862,9 +2943,9 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             foreach (var key in dead)
             {
                 var l = _sectionCache[key];
-                FreeSectionGpu(l.opaque);
-                FreeSectionGpu(l.cutout);
-                FreeSectionGpu(l.translucent);
+                DeferFreeSectionGpu(l.opaque);
+                DeferFreeSectionGpu(l.cutout);
+                DeferFreeSectionGpu(l.translucent);
                 _sectionCache.Remove(key);
             }
         }
@@ -3356,6 +3437,10 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         if (_vk.CreateDescriptorPool(_device, in poolInfo, null, out _skyExtraDescPool) != Result.Success)
             throw new InvalidOperationException("vkCreateDescriptorPool (skyextra) failed.");
 
+        // Hoisted out of the loop (CA2014): one scratch buffer, fully rewritten each
+        // iteration, so the stack doesn't grow per frame slot.
+        var cWrites = stackalloc WriteDescriptorSet[2];
+
         for (int f = 0; f < MaxFramesInFlight; f++)
         {
             // stars set (sky UBO-only layout)
@@ -3399,7 +3484,6 @@ public sealed unsafe class VulkanBackend : IGpuBackend
                 ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = _cloudView, Sampler = _cloudSampler,
             };
             var cSet = _cloudDescSet[f];
-            var cWrites = stackalloc WriteDescriptorSet[2];
             cWrites[0] = new WriteDescriptorSet
             {
                 SType = StructureType.WriteDescriptorSet, DstSet = cSet, DstBinding = 0, DstArrayElement = 0,
@@ -4833,6 +4917,9 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         {
             ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = _iconView, Sampler = _iconSampler,
         };
+        // Hoisted out of the loop (CA2014): one scratch buffer, fully rewritten each
+        // iteration, so the stack doesn't grow per sprite set.
+        var writes = stackalloc WriteDescriptorSet[2];
         for (int i = 0; i < total; i++)
         {
             CreateBuffer(uboSize, BufferUsageFlags.UniformBufferBit,
@@ -4852,7 +4939,6 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             var bi = new DescriptorBufferInfo { Buffer = _spriteUbo[i], Offset = 0, Range = uboSize };
             var set = _spriteDescSet[i];
             var imgLocal = iconImg;
-            var writes = stackalloc WriteDescriptorSet[2];
             writes[0] = new WriteDescriptorSet
             {
                 SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 0, DstArrayElement = 0,
@@ -5006,6 +5092,9 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         {
             ImageLayout = ImageLayout.ShaderReadOnlyOptimal, ImageView = _atlasView, Sampler = _atlasSampler,
         };
+        // Hoisted out of the loop (CA2014): one scratch buffer, fully rewritten each
+        // iteration, so the stack doesn't grow per frame slot.
+        var writes = stackalloc WriteDescriptorSet[2];
         for (int i = 0; i < MaxFramesInFlight; i++)
         {
             CreateBuffer(uboSize, BufferUsageFlags.UniformBufferBit,
@@ -5021,7 +5110,6 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             var bi = new DescriptorBufferInfo { Buffer = _particleUbo[i], Offset = 0, Range = uboSize };
             var set = _particleDescSet[i];
             var imgLocal = atlasImg;
-            var writes = stackalloc WriteDescriptorSet[2];
             writes[0] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 0, DstArrayElement = 0, DescriptorType = DescriptorType.UniformBuffer, DescriptorCount = 1, PBufferInfo = &bi };
             writes[1] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = set, DstBinding = 1, DstArrayElement = 0, DescriptorType = DescriptorType.CombinedImageSampler, DescriptorCount = 1, PImageInfo = &imgLocal };
             _vk.UpdateDescriptorSets(_device, 2, writes, 0, null);
@@ -5174,6 +5262,26 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         _entityReady = false;
     }
 
+    /// Sky/celestial renderer resources. Previously these (the 6 mapped sky UBOs +
+    /// the two pipelines + the descriptor pool/layout) were never destroyed, which
+    /// only surfaced once the deferred-free fix let the app exit cleanly instead of
+    /// device-losing first — vkDestroyDevice then reported them as leaked objects.
+    private void CleanupSkyRenderer()
+    {
+        for (int i = 0; i < _skyUbo.Length; i++)
+        {
+            if (_skyUboMapped[i] != null) { _vk.UnmapMemory(_device, _skyUboMem[i]); _skyUboMapped[i] = null; }
+            if (_skyUbo[i].Handle != 0) { _vk.DestroyBuffer(_device, _skyUbo[i], null); _skyUbo[i] = default; }
+            if (_skyUboMem[i].Handle != 0) { _vk.FreeMemory(_device, _skyUboMem[i], null); _skyUboMem[i] = default; }
+        }
+        if (_skyPipeline.Handle != 0) { _vk.DestroyPipeline(_device, _skyPipeline, null); _skyPipeline = default; }
+        if (_celestialPipeline.Handle != 0) { _vk.DestroyPipeline(_device, _celestialPipeline, null); _celestialPipeline = default; }
+        if (_skyPipelineLayout.Handle != 0) { _vk.DestroyPipelineLayout(_device, _skyPipelineLayout, null); _skyPipelineLayout = default; }
+        if (_skyDescPool.Handle != 0) { _vk.DestroyDescriptorPool(_device, _skyDescPool, null); _skyDescPool = default; }
+        if (_skyDescLayout.Handle != 0) { _vk.DestroyDescriptorSetLayout(_device, _skyDescLayout, null); _skyDescLayout = default; }
+        _skyReady = false;
+    }
+
     public bool RequestScreenshot(string path)
     {
         _screenshotPath = path;
@@ -5300,6 +5408,16 @@ public sealed unsafe class VulkanBackend : IGpuBackend
 
         var fence = _inFlightFences[_currentFrame];
         _vk.WaitForFences(_device, 1, in fence, true, ulong.MaxValue);
+
+        // The fence wait above guarantees the GPU finished the work submitted
+        // MaxFramesInFlight frames ago. Advance the deferred-free ring and destroy
+        // the buckets we're about to reuse: those sections were queued (DeferFree)
+        // DeferFreeSlots frames back, so — since this queue executes in order — the
+        // GPU is provably done reading them. Doing this AFTER the fence wait (and
+        // before any new section frees this frame) is what keeps full streaming,
+        // where SyncSections frees thousands of sections, from device-losing.
+        _deferSlot = (_deferSlot + 1) % DeferFreeSlots;
+        DrainPendingFrees(_deferSlot);
 
         uint imageIndex = 0;
         var acquire = _khrSwapchain.AcquireNextImage(
@@ -5456,7 +5574,10 @@ public sealed unsafe class VulkanBackend : IGpuBackend
             throw new InvalidOperationException("vkEndCommandBuffer failed.");
 
         var waitSemaphore = _imageAvailable[_currentFrame];
-        var signalSemaphore = _renderFinished[_currentFrame];
+        // Signal the render-finished semaphore for THIS swapchain image (not the
+        // frame-in-flight slot), so present can't wait on a semaphore that a prior
+        // present of a different image is still using.
+        var signalSemaphore = _renderFinished[_imageIndex];
         var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
 
         var submitInfo = new SubmitInfo
@@ -5536,6 +5657,9 @@ public sealed unsafe class VulkanBackend : IGpuBackend
 
         CreateSwapchain();
         CreateImageViews();
+        // The swapchain image count can change on resize; rebuild the per-image
+        // render-finished semaphores to match.
+        CreateRenderFinishedSemaphores();
         CreateDepthResources();
         CreateRenderPass();
         CreateFramebuffers();
@@ -5602,11 +5726,18 @@ public sealed unsafe class VulkanBackend : IGpuBackend
 
     private void CleanupWorldRenderer()
     {
-        // Section GPU buffers.
+        // The GPU is idle here (Dispose waits DeviceWaitIdle before calling this),
+        // so it's safe to destroy immediately. Flush ALL deferred-free buckets so
+        // nothing parked in the ring leaks, then the live section cache.
+        for (int s = 0; s < DeferFreeSlots; s++)
+            if (_pendingFree[s] != null) DrainPendingFrees(s);
+
+        // Section GPU buffers (all three layers — opaque, cutout, translucent).
         foreach (var l in _sectionCache.Values)
         {
-            FreeSectionGpu(l.opaque);
-            FreeSectionGpu(l.cutout);
+            DestroySectionGpu(l.opaque);
+            DestroySectionGpu(l.cutout);
+            DestroySectionGpu(l.translucent);
         }
         _sectionCache.Clear();
 
@@ -5638,11 +5769,17 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         if (_uboBuffer.Handle != 0) { _vk.DestroyBuffer(_device, _uboBuffer, null); _uboBuffer = default; }
         if (_uboMemory.Handle != 0) { _vk.FreeMemory(_device, _uboMemory, null); _uboMemory = default; }
 
+        // Translucent-pass UBO (was previously never freed → leaked on a clean exit).
+        if (_uboMappedTrans != null) { _vk.UnmapMemory(_device, _uboMemoryTrans); _uboMappedTrans = null; }
+        if (_uboBufferTrans.Handle != 0) { _vk.DestroyBuffer(_device, _uboBufferTrans, null); _uboBufferTrans = default; }
+        if (_uboMemoryTrans.Handle != 0) { _vk.FreeMemory(_device, _uboMemoryTrans, null); _uboMemoryTrans = default; }
+
         // Sun shadow map (double-buffered: per-frame image/view/framebuffer + UBO).
         if (_shadowReady)
         {
             if (_shadowPipeline.Handle != 0) { _vk.DestroyPipeline(_device, _shadowPipeline, null); _shadowPipeline = default; }
             if (_shadowPipelineLayout.Handle != 0) { _vk.DestroyPipelineLayout(_device, _shadowPipelineLayout, null); _shadowPipelineLayout = default; }
+            if (_shadowDescPool.Handle != 0) { _vk.DestroyDescriptorPool(_device, _shadowDescPool, null); _shadowDescPool = default; }
             if (_shadowDescLayout.Handle != 0) { _vk.DestroyDescriptorSetLayout(_device, _shadowDescLayout, null); _shadowDescLayout = default; }
             if (_shadowSampler.Handle != 0) { _vk.DestroySampler(_device, _shadowSampler, null); _shadowSampler = default; }
             if (_shadowRenderPass.Handle != 0) { _vk.DestroyRenderPass(_device, _shadowRenderPass, null); _shadowRenderPass = default; }
@@ -5664,6 +5801,7 @@ public sealed unsafe class VulkanBackend : IGpuBackend
         CleanupEntityRenderer();
         CleanupUiRenderer();
         CleanupFxRenderers();
+        CleanupSkyRenderer();
     }
 
     private void CleanupFxRenderers()

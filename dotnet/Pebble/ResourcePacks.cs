@@ -44,8 +44,8 @@ public sealed class TileAnimation
 public sealed class PackAtlasResult
 {
     public int res;
-    public byte[][] slices;                                  // [tileCount][res*res*4]
-    public PebbleCore.BuiltAtlas icon16;                    // 16× tiles for the icon renderer
+    public required byte[][] slices;                         // [tileCount][res*res*4]
+    public required PebbleCore.BuiltAtlas icon16;            // 16× tiles for the icon renderer
     public List<TileAnimation> animations = new();
     public Dictionary<string, byte[]> itemIcons = new();    // item name → 16×16 RGBA
     public bool fluidAnimated;
@@ -94,7 +94,7 @@ public static class ResourcePacks
             if (texRoot.Length == 0) texRoot = fallbackRoot;
         }
 
-        public byte[] File(string inPackPath)
+        public byte[]? File(string inPackPath)
         {
             if (!_index.TryGetValue(inPackPath.ToLowerInvariant(), out var e)) return null;
             using var s = e.Open();
@@ -114,7 +114,7 @@ public static class ResourcePacks
     }
 
     // ── PNG decode → straight RGBA8 ───────────────────────────────────────────
-    private static RGBAImage DecodePNG(byte[] data)
+    private static RGBAImage? DecodePNG(byte[] data)
     {
         try
         {
@@ -368,7 +368,7 @@ public static class ResourcePacks
         }
     }
 
-    private static RGBAImage CropEntityTile(Pack pack, EntityCrop crop)
+    private static RGBAImage? CropEntityTile(Pack pack, EntityCrop crop)
     {
         var tex = LoadTexture(pack, crop.path);
         if (tex == null) return null;
@@ -427,12 +427,12 @@ public static class ResourcePacks
     // ── texture + optional .mcmeta animation load ─────────────────────────────
     private sealed class LoadedTexture
     {
-        public RGBAImage image;
-        public List<(int index, int ticks)> animFrames;   // null = not animated
+        public required RGBAImage image;
+        public List<(int index, int ticks)>? animFrames;   // null = not animated
         public bool interpolate;
     }
 
-    private static LoadedTexture LoadTexture(Pack pack, string relPath)
+    private static LoadedTexture? LoadTexture(Pack pack, string relPath)
     {
         string full = pack.texRoot + relPath + ".png";
         var d = pack.File(full);
@@ -483,7 +483,7 @@ public static class ResourcePacks
 
     // ── robust pack-zip location ──────────────────────────────────────────────
     /// search next to the exe, then walk parents looking for packaging/<file>
-    public static string FindPackZip(string fileName = DefaultPackFile)
+    public static string? FindPackZip(string fileName = DefaultPackFile)
     {
         var candidates = new List<string>();
         string baseDir = AppContext.BaseDirectory;
@@ -502,7 +502,7 @@ public static class ResourcePacks
     /// Open the pack zip at `path` and build per-tile slices (in tileName order),
     /// the 16× icon atlas, animations and item-icon overrides. Returns null if the
     /// zip can't be opened or has no usable texture root.
-    public static PackAtlasResult LoadPack(string path)
+    public static PackAtlasResult? LoadPack(string path)
     {
         Pack pack;
         try { pack = new Pack(path); }
@@ -562,7 +562,7 @@ public static class ResourcePacks
             for (int i = 0; i < count; i++)
             {
                 if (resolved[i] != null) Vote(resolved[i].image.width);
-                else if (compositeSrcs[i] != null) Vote(Math.Max(compositeSrcs[i].Value.top.width, compositeSrcs[i].Value.bottom.width));
+                else if (compositeSrcs[i] is { } cs) Vote(Math.Max(cs.top.width, cs.bottom.width));
                 else if (entityTiles[i] != null) Vote(entityTiles[i].width);
             }
             int res = 16;
@@ -620,13 +620,13 @@ public static class ResourcePacks
                     applied++;
                     px = ScaleTo(entityTiles[i], res);
                 }
-                else if (compositeSrcs[i] != null)
+                else if (compositeSrcs[i] is { } cs)
                 {
                     applied++;
                     px = new byte[res * res * 4];
                     int half = res / 2;
-                    var t = ScaleTo(compositeSrcs[i].Value.top, res);
-                    var b = ScaleTo(compositeSrcs[i].Value.bottom, res);
+                    var t = ScaleTo(cs.top, res);
+                    var b = ScaleTo(cs.bottom, res);
                     for (int y = 0; y < half; y++)
                         for (int x = 0; x < res; x++)
                         {
@@ -680,15 +680,15 @@ public static class ResourcePacks
 
     // ── one-shot load used by the backends at atlas-build time ────────────────
     private static bool _attempted;
-    private static PackAtlasResult _cached;
+    private static PackAtlasResult? _cached;
 
     /// Load the default Faithful pack once and cache the result; null if missing.
     /// Both backends call this from their atlas init so they share one decode.
-    public static PackAtlasResult LoadDefault()
+    public static PackAtlasResult? LoadDefault()
     {
         if (_attempted) return _cached;
         _attempted = true;
-        string zip = FindPackZip();
+        string? zip = FindPackZip();
         if (zip == null)
         {
             Console.WriteLine($"[packs] {DefaultPackFile} not found — using procedural atlas");
