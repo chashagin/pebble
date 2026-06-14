@@ -142,6 +142,12 @@ public sealed unsafe class D3D12Backend : IGpuBackend
     private const uint SkyCbvSize = 256;  // SkyU / CelestialU (128) rounded up to 256
 
     private const Format RtvFormat = Format.FormatR8G8B8A8Unorm;
+    // The swapchain BUFFER is UNORM (flip-model), but the present RTV reinterprets it
+    // as _SRGB so the composite/UI writes get the linear->sRGB gamma encode for free —
+    // exactly what the Vulkan backend gets from its B8G8R8A8_SRGB swapchain image. The
+    // offscreen-HDR composite outputs LINEAR color; without this encode the swapchain
+    // would store raw linear values and the scene renders ~2x too dark (DX12-only).
+    private const Format RtvFormatSrgb = Format.FormatR8G8B8A8UnormSrgb;
     private const Format DepthFormat = Format.FormatD32Float;
 
     private bool _worldReady;
@@ -661,7 +667,10 @@ public sealed unsafe class D3D12Backend : IGpuBackend
                     _swapChain.GetBuffer(i, SilkMarshal.GuidPtrOf<ID3D12Resource>(), (void**)ppTarget),
                     $"SwapChain.GetBuffer({i})");
 
-            _device.CreateRenderTargetView(_renderTargets[i], (RenderTargetViewDesc*)null, rtvHandle);
+            // sRGB RTV over the UNORM buffer: writes are gamma-encoded on store (matches
+            // Vulkan's sRGB swapchain). See RtvFormatSrgb docs.
+            var srgbRtv = new RenderTargetViewDesc { Format = RtvFormatSrgb, ViewDimension = RtvDimension.Texture2D };
+            _device.CreateRenderTargetView(_renderTargets[i], &srgbRtv, rtvHandle);
             rtvHandle.Ptr += _rtvDescriptorSize;
         }
     }
@@ -981,7 +990,8 @@ public sealed unsafe class D3D12Backend : IGpuBackend
         _blurPso = CreateFullscreenPso(_postRootSig, PostShadersHlsl.FullscreenVertex, PostShadersHlsl.Blur, SceneRtvFormat, "blur");
         _ultraPso = CreateFullscreenPso(_ultraRootSig, PostShadersHlsl.FullscreenVertex, PostShadersHlsl.Ultra, SceneRtvFormat, "ultra");
         _ultraBlurPso = CreateFullscreenPso(_postRootSig, PostShadersHlsl.FullscreenVertex, PostShadersHlsl.UltraBlur, SceneRtvFormat, "ultra_blur");
-        _compositePso = CreateFullscreenPso(_postRootSig, PostShadersHlsl.FullscreenVertex, PostShadersHlsl.Composite, RtvFormat, "composite");
+        // Composite targets the sRGB present RTV (gamma-encode on store, matches Vulkan).
+        _compositePso = CreateFullscreenPso(_postRootSig, PostShadersHlsl.FullscreenVertex, PostShadersHlsl.Composite, RtvFormatSrgb, "composite");
     }
 
     private CpuDescriptorHandle CurrentRtvHandle()
@@ -1406,7 +1416,8 @@ public sealed unsafe class D3D12Backend : IGpuBackend
                 InputLayout = new InputLayoutDesc { PInputElementDescs = elems, NumElements = 4 },
                 SampleDesc = new SampleDesc(1, 0),
             };
-            psoDesc.RTVFormats[0] = RtvFormat;
+            // UI draws into the same sRGB present RTV as the composite.
+            psoDesc.RTVFormats[0] = RtvFormatSrgb;
 
             fixed (ID3D12PipelineState** pp = &_uiPso.Handle)
                 ThrowIfFailed(
@@ -2468,7 +2479,9 @@ public sealed unsafe class D3D12Backend : IGpuBackend
                     _swapChain.GetBuffer(i, SilkMarshal.GuidPtrOf<ID3D12Resource>(), (void**)ppTarget),
                     $"SwapChain.GetBuffer({i}) (resize)");
 
-            _device.CreateRenderTargetView(_renderTargets[i], (RenderTargetViewDesc*)null, rtvHandle);
+            // sRGB RTV over the UNORM buffer (see CreateRtvHeapAndTargets / RtvFormatSrgb).
+            var srgbRtv = new RenderTargetViewDesc { Format = RtvFormatSrgb, ViewDimension = RtvDimension.Texture2D };
+            _device.CreateRenderTargetView(_renderTargets[i], &srgbRtv, rtvHandle);
             rtvHandle.Ptr += _rtvDescriptorSize;
         }
 
