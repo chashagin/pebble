@@ -1,0 +1,1034 @@
+// Atlas painters part 2 — plants, crops, mushroom blocks, functional blocks,
+// torches/lanterns, redstone, rails, doors/trapdoors, misc, saplings,
+// destroy stages, particle sprites.
+//
+// Ported from Sources/PebbleCore/Render/AtlasPainters2.swift.
+//
+// Defines static class `AtlasPainters2Globals` holding the module-level free
+// functions of AtlasPainters2.swift (`registerPainters2`, plus the private
+// helpers `flower`/`froglight`/`froglightSide`). Surface via
+// `global using static PebbleCore.AtlasPainters2Globals` so `registerPainters2()`
+// resolves unqualified (it is invoked from AtlasGlobals.ensurePainters()).
+//
+// External symbols referenced by name (defined in AtlasPainters1.swift's port):
+//   C_OAK, C_STONE, WOOD_COLORS (Dictionary<string,WoodColor>), WoodColor (.plank),
+//   LEAF_COLORS (Dictionary<string,int>), crack(T,int).
+// And from AtlasGlobals (already surfaced via global using static):
+//   p, rp, paintInto, fallbackPaint, shade, mixC.
+
+using System;
+using System.Collections.Generic;
+
+namespace PebbleCore;
+
+public static class AtlasPainters2Globals
+{
+    private static void flower(T t, int head, int? center, bool tall = false)
+    {
+        t.clearAlpha();
+        int stem = 0x4f8f2e;
+        t.vline(7, tall ? 6 : 8, 15, stem);
+        t.set(6, 11, stem); t.set(8, 12, stem);
+        int hy = tall ? 4 : 6;
+        t.disc(7.5, (double)hy, 2.4, head);
+        if (center != null)
+        {
+            t.set(7, hy, center.Value); t.set(8, hy, center.Value);
+        }
+    }
+
+    private static void froglight(T t, int c)
+    {
+        t.blotch(c, 0.04);
+        t.disc(7.5, 7.5, 5, shade(c, 1.05));
+        t.border(shade(c, 0.92));
+    }
+    private static void froglightSide(T t, int c)
+    {
+        t.blotch(c, 0.05);
+        foreach (int x in new[] { 0, 15 }) { t.vline(x, 0, 15, shade(c, 0.9)); }
+        int y = 2;
+        while (y < 14) { t.hline(y, 2, 13, shade(c, 1.06)); y += 4; }
+    }
+
+    public static void registerPainters2()
+    {
+        // --- plants ---
+        p("short_grass", t => { t.cross(0x8e8e8e); });
+        p("fern", t =>
+        {
+            t.clearAlpha();
+            int c = 0x8e8e8e;
+            t.vline(7, 4, 15, shade(c, 0.85));
+            for (int i = 0; i < 5; i++)
+            {
+                int y = 5 + i * 2;
+                t.hline(y, 7 - (5 - i), 7, c); t.hline(y, 8, 8 + (5 - i), c);
+            }
+        });
+        p("dead_bush", t =>
+        {
+            t.clearAlpha();
+            int c = 0x946428;
+            t.vline(7, 8, 15, c);
+            t.set(6, 7, c); t.set(5, 6, c); t.set(8, 7, c); t.set(9, 6, c); t.set(10, 5, c);
+            t.set(6, 10, c); t.set(5, 9, c); t.set(9, 11, c); t.set(10, 10, c);
+        });
+        p("tall_grass_bottom", t => { t.cross(0x8e8e8e); });
+        p("tall_grass_top", t => { t.cross(0x8e8e8e); });
+        p("dandelion", t => { flower(t, 0xf6e23c, 0xd8b820); });
+        p("poppy", t => { flower(t, 0xd0392e, 0x1c1c1c); });
+        p("blue_orchid", t => { flower(t, 0x32a3d4, 0xe8f0f8); });
+        p("allium", t => { flower(t, 0xb97bd8, null); });
+        p("azure_bluet", t =>
+        {
+            t.clearAlpha();
+            int s = 0x4f8f2e;
+            foreach (var (x, y) in new[] { (3, 9), (8, 7), (12, 10) })
+            {
+                t.vline(x, y + 2, 15, s);
+                t.disc((double)x + 0.5, (double)y, 1.4, 0xe8e8f0);
+                t.set(x, y, 0xd8c840);
+            }
+        });
+        p("red_tulip", t => { flower(t, 0xc83a2a, null); });
+        p("orange_tulip", t => { flower(t, 0xe07a2c, null); });
+        p("white_tulip", t => { flower(t, 0xeaeaea, null); });
+        p("pink_tulip", t => { flower(t, 0xe8a8c8, null); });
+        p("oxeye_daisy", t => { flower(t, 0xefefef, 0xe8c63c); });
+        p("cornflower", t => { flower(t, 0x4660c8, 0x2a3c8a); });
+        p("lily_of_the_valley", t =>
+        {
+            t.clearAlpha();
+            int s = 0x4f8f2e;
+            t.vline(7, 5, 15, s);
+            foreach (var (x, y) in new[] { (5, 7), (6, 9), (5, 11), (6, 13) }) { t.disc((double)x, (double)y, 1.2, 0xf4f8f4); }
+        });
+        p("torchflower", t => { flower(t, 0xe8742c, 0xf8c83c); t.set(7, 4, 0xf8c83c); });
+        p("wither_rose", t => { flower(t, 0x1c1c1c, 0x080808); });
+        p("sunflower_bottom", t => { t.cross(0x8e8e8e); });
+        p("sunflower_top", t => { t.clearAlpha(); t.vline(7, 8, 15, 0x4f8f2e); t.disc(7.5, 5, 4, 0xe8b820); t.disc(7.5, 5, 2, 0x6a4a1a); });
+        p("lilac_bottom", t => { t.cross(0x8e8e8e); });
+        p("lilac_top", t => { t.clearAlpha(); t.vline(7, 10, 15, 0x4f8f2e); t.disc(6, 5, 2.6, 0xc8a0d8); t.disc(10, 7, 2.4, 0xd8b8e4); });
+        p("rose_bush_bottom", t => { t.cross(0x3f6a1e); });
+        p("rose_bush_top", t =>
+        {
+            t.clearAlpha();
+            foreach (var (x, y) in new[] { (4, 5), (9, 3), (12, 7), (6, 9) })
+            {
+                t.disc((double)x, (double)y, 1.5, 0xd03030);
+                t.set(x, y, 0xf05050);
+            }
+            for (int i = 0; i < 14; i++)
+            {
+                int x = 2 + (int)(t.rand(i, 0) * 12), y = 8 + (int)(t.rand(i, 1) * 7);
+                t.set(x, y, 0x3f6a1e);
+            }
+        });
+        p("peony_bottom", t => { t.cross(0x3f6a1e); });
+        p("peony_top", t =>
+        {
+            t.clearAlpha();
+            foreach (var (x, y) in new[] { (5, 5), (10, 4), (12, 8), (7, 9) }) { t.disc((double)x, (double)y, 2, 0xe8b8d0); }
+            for (int i = 0; i < 12; i++)
+            {
+                int x = 2 + (int)(t.rand(i, 0) * 12), y = 9 + (int)(t.rand(i, 1) * 6);
+                t.set(x, y, 0x3f6a1e);
+            }
+        });
+        p("pitcher_plant_bottom", t => { t.clearAlpha(); t.vline(7, 4, 15, 0x3a7a4a); t.vline(8, 6, 15, 0x3a7a4a); });
+        p("pitcher_plant_top", t => { t.clearAlpha(); t.disc(7.5, 8, 4, 0x4a9ab0); t.rect(5, 3, 10, 8, 0x4a9ab0); t.hline(3, 5, 10, 0x86c8d8); t.set(7, 2, 0x86c8d8); });
+        p("brown_mushroom", t => { t.clearAlpha(); t.vline(7, 9, 15, 0xc8bca8); t.disc(7.5, 7, 3, 0x9a7050); t.hline(9, 5, 10, 0x9a7050); });
+        p("red_mushroom", t => { t.clearAlpha(); t.vline(7, 10, 15, 0xe0d8c8); t.disc(7.5, 7, 3.4, 0xd03030); t.set(6, 6, 0xf0f0e8); t.set(9, 8, 0xf0f0e8); });
+        p("crimson_fungus", t => { t.clearAlpha(); t.vline(7, 9, 15, 0x9a4a4a); t.disc(7.5, 7, 3, 0xb02828); t.hline(6, 6, 9, 0xd86a2a); });
+        p("warped_fungus", t => { t.clearAlpha(); t.vline(7, 9, 15, 0x4a8a80); t.disc(7.5, 7, 3, 0x14a8a8); t.hline(6, 6, 9, 0xd87a3a); });
+        p("crimson_roots", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 6; i++)
+            {
+                int x = 2 + i * 2 + (int)(t.rand(i, 0) * 2);
+                t.vline(x, 9 + (int)(t.rand(i, 1) * 4), 15, 0xc12c4c);
+            }
+        });
+        p("warped_roots", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 6; i++)
+            {
+                int x = 2 + i * 2 + (int)(t.rand(i, 0) * 2);
+                t.vline(x, 9 + (int)(t.rand(i, 1) * 4), 15, 0x18a888);
+            }
+        });
+        p("nether_sprouts", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 7; i++)
+            {
+                int x = 1 + i * 2;
+                t.vline(x, 12 + (int)(t.rand(i, 0) * 2), 15, 0x16c0a8);
+                t.set(x, 11 + (int)(t.rand(i, 0) * 2), 0x5ce8cc);
+            }
+        });
+        p("weeping_vines", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x8a1c1c); t.set(6, 3, 0xb12c2c); t.set(8, 7, 0xb12c2c); t.set(6, 11, 0xb12c2c); t.set(7, 15, 0xd84c4c); });
+        p("twisting_vines", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x14887c); t.set(8, 2, 0x18b89c); t.set(6, 6, 0x18b89c); t.set(8, 10, 0x18b89c); t.set(7, 0, 0x2ce8c8); });
+        p("sugar_cane", t =>
+        {
+            t.clearAlpha();
+            foreach (int x in new[] { 4, 8, 12 })
+            {
+                t.vline(x, 0, 15, 0x9eb55e);
+                t.vline(x + 1, 0, 15, 0x88a04e);
+                foreach (int y in new[] { 4, 9, 13 }) { t.set(x, y, 0x6e8440); }
+            }
+        });
+        p("cactus_side", t =>
+        {
+            t.blotch(0x10821c, 0.08, 3);
+            t.vline(0, 0, 15, 0x0a5c14); t.vline(15, 0, 15, 0x0a5c14);
+            foreach (int x in new[] { 3, 7, 11 })
+            {
+                int y = 1;
+                while (y < 16) { t.set(x, y, 0xd8e8b0); y += 3; }
+            }
+        });
+        p("cactus_top", t => { t.blotch(0x14942a, 0.07, 3); t.border(0x0a5c14); t.speckle(0xd8e8b0, 6); });
+        p("cactus_bottom", t => { t.blotch(0x0e7018, 0.07, 3); });
+        p("bamboo", t =>
+        {
+            t.clearAlpha();
+            t.vline(6, 0, 15, 0x82a83c); t.vline(7, 0, 15, 0x94c046); t.vline(8, 0, 15, 0x82a83c);
+            foreach (int y in new[] { 3, 8, 13 }) { t.hline(y, 6, 8, 0x5c7e2a); }
+            t.set(9, 4, 0x6e9434); t.set(10, 3, 0x6e9434);
+        });
+        p("vine", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 24; i++)
+            {
+                int x = (int)(t.rand(i, 0) * 16), y = (int)(t.rand(i, 1) * 16);
+                t.set(x, y, shade(0x8e8e8e, 0.8 + t.rand(i, 2) * 0.4));
+                if (t.rand(i, 3) < 0.6) { t.set(x, Math.Min(15, y + 1), 0x7a7a7a); }
+            }
+            t.vline(4, 0, 15, 0x868686); t.vline(11, 0, 13, 0x808080);
+        });
+        p("glow_lichen", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 22; i++)
+            {
+                int x = (int)(t.rand(i, 0) * 16), y = (int)(t.rand(i, 1) * 16);
+                t.set(x, y, 0x6f8a84, 220);
+                if (t.rand(i, 2) < 0.5) { t.set(x + 1, y, 0x90b8ae, 220); }
+            }
+            t.speckle(0xc8e8dc, 8);
+        });
+        p("sculk_vein", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 20; i++)
+            {
+                int x = (int)(t.rand(i, 0) * 16), y = (int)(t.rand(i, 1) * 16);
+                t.set(x, y, 0x0c2330, 230);
+                if (t.rand(i, 2) < 0.5) { t.set(x + 1, y, 0x16424e, 230); }
+            }
+            t.speckle(0x2ce8e8, 4);
+        });
+        p("lily_pad", t => { t.clearAlpha(); t.disc(7.5, 7.5, 6, 0x208030); t.rect(8, 1, 14, 7, 0x000000, 0); t.set(5, 5, 0x2ca040); t.set(9, 10, 0x2ca040); });
+        p("seagrass", t =>
+        {
+            t.clearAlpha();
+            foreach (int x in new[] { 3, 7, 11 })
+            {
+                for (int y = 4; y < 16; y++)
+                {
+                    int wob = (int)Math.Floor(Math.Sin((double)y * 0.8 + (double)x) * 1.2);
+                    t.set(x + wob, y, y % 3 == 0 ? 0x4a9a28 : 0x3f8a20);
+                }
+            }
+        });
+        p("tall_seagrass_bottom", t => { paintInto(t, "seagrass"); });
+        p("tall_seagrass_top", t =>
+        {
+            t.clearAlpha();
+            foreach (int x in new[] { 4, 8, 12 })
+            {
+                for (int y = 8; y < 16; y++)
+                {
+                    int wob = (int)Math.Floor(Math.Sin((double)y * 0.7 + (double)x) * 1.4);
+                    t.set(x + wob, y, 0x3f8a20);
+                }
+                t.set(x, 7, 0x5cb434);
+            }
+        });
+        p("kelp", t => { t.clearAlpha(); t.vline(7, 2, 15, 0x3a7a1e); t.set(6, 4, 0x4f9a28); t.set(8, 7, 0x4f9a28); t.set(6, 10, 0x4f9a28); t.set(7, 1, 0x68b83a); });
+        p("kelp_plant", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x3a7a1e); t.set(6, 2, 0x4f9a28); t.set(8, 5, 0x4f9a28); t.set(6, 9, 0x4f9a28); t.set(8, 13, 0x4f9a28); });
+        p("sea_pickle", t => { t.clearAlpha(); t.rect(6, 8, 9, 15, 0x5a6a28); t.rect(7, 6, 8, 8, 0x6e8030); t.set(7, 5, 0x9ab84a); t.set(8, 5, 0x9ab84a); });
+        p("spore_blossom", t => { t.clearAlpha(); t.disc(7.5, 7.5, 5, 0xd667a8); t.disc(7.5, 7.5, 2, 0x68c860); t.set(2, 2, 0xe88ac8); t.set(13, 3, 0xe88ac8); t.set(3, 13, 0xe88ac8); });
+        p("hanging_roots", t =>
+        {
+            t.clearAlpha();
+            foreach (int x in new[] { 3, 6, 9, 12 }) { t.vline(x, 0, 8 + (int)(t.rand(x, 0) * 6), 0xa3835c); }
+        });
+        p("big_dripleaf", t =>
+        {
+            t.fill(0x8e8e8e);
+            t.border(0x787878);
+            t.set(0, 0, 0x000000, 0); t.set(15, 0, 0x000000, 0);
+            for (int i = 0; i < 5; i++) { t.set(7 + (int)(t.rand(i, 0) * 2), 3 + i * 2, 0x6e6e6e); }
+        });
+        p("big_dripleaf_stem", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x8e8e8e); t.vline(8, 0, 15, 0x7a7a7a); });
+        p("small_dripleaf_top", t => { t.clearAlpha(); t.disc(7.5, 6, 4, 0x8e8e8e); t.vline(7, 9, 15, 0x7a7a7a); });
+        p("small_dripleaf_bottom", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x7a7a7a); t.set(6, 4, 0x8e8e8e); });
+        p("moss_block", t => { t.blotch(0x586e2e, 0.11, 2); t.speckle(0x6e8a3a, 14); });
+        p("pink_petals", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 7; i++)
+            {
+                int x = 1 + (int)(t.rand(i, 0) * 13), y = 1 + (int)(t.rand(i, 1) * 13);
+                t.disc((double)x, (double)y, 1.3, 0xf0b8d0);
+                t.set(x, y, 0xf8d8e4);
+            }
+        });
+        p("azalea", t => { t.blotch(0x5e7c2a, 0.12, 2); t.speckle(0x76a032, 10); });
+        p("flowering_azalea", t => { t.blotch(0x5e7c2a, 0.12, 2); t.speckle(0xd667c8, 8); });
+        p("cave_vines", t => { t.clearAlpha(); t.vline(7, 0, 15, 0x5a7a2e); t.set(6, 4, 0x6e9438); t.set(8, 9, 0x6e9438); });
+        p("cave_vines_lit", t => { paintInto(t, "cave_vines"); t.set(5, 6, 0xffb83c); t.set(9, 11, 0xffb83c); t.set(7, 14, 0xffd86a); });
+        p("cave_vines_plant", t => { paintInto(t, "cave_vines"); });
+        p("cave_vines_plant_lit", t => { paintInto(t, "cave_vines_lit"); });
+        rp("^sweet_berry_bush_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            int c = 0x3f6a26;
+            for (int i = 0; i < (12 + stage * 4); i++)
+            {
+                int x = 2 + (int)(t.rand(i, 0) * 12), y = 4 + (int)(t.rand(i, 1) * 11);
+                t.set(x, y, shade(c, 0.85 + t.rand(i, 2) * 0.35));
+            }
+            if (stage >= 2)
+            {
+                for (int i = 0; i < (3 + stage); i++)
+                {
+                    t.set(3 + (int)(t.rand(i, 5) * 10), 5 + (int)(t.rand(i, 6) * 9), 0xd03048);
+                }
+            }
+        });
+
+        // --- crops ---
+        rp("^wheat_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            int c = mixC(0x3fa82e, 0xd8c054, (double)stage / 7);
+            double h = 4 + (double)stage * 1.4;
+            foreach (int x in new[] { 2, 5, 8, 11, 14 })
+            {
+                t.vline(x, (int)Math.Floor(16 - h), 15, c);
+                if (stage >= 4)
+                {
+                    t.set(x, (int)Math.Floor(15 - h), shade(c, 1.15));
+                    t.set(x - 1, (int)Math.Floor(16 - h), shade(c, 0.9));
+                }
+            }
+        });
+        rp("^(carrots|potatoes)_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[2]);
+            t.clearAlpha();
+            int green = m[1] == "carrots" ? 0x2c8a1e : 0x3c9a2a;
+            int h = 3 + stage * 3;
+            foreach (int x in new[] { 3, 7, 11 })
+            {
+                int y = 0;
+                while (y < h && y < 12)
+                {
+                    t.set(x + (y % 2), 15 - y, green);
+                    y += 1;
+                }
+                if (stage == 3 && m[1] == "carrots") { t.set(x, 15, 0xe87a2c); }
+            }
+        });
+        rp("^beetroots_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            foreach (int x in new[] { 3, 7, 11 })
+            {
+                int h = 2 + stage * 2;
+                int y = 0;
+                while (y < h && y < 9)
+                {
+                    t.set(x + (y % 2), 15 - y, 0x3c7a3c);
+                    y += 1;
+                }
+                if (stage >= 3) { t.set(x, 15, 0xa82a4a); }
+            }
+        });
+        rp("^torchflower_crop_stage(\\d)$", (t, m) =>
+        {
+            t.clearAlpha();
+            t.vline(7, 9, 15, 0x4f8f2e);
+            if (m[1] == "1") { t.disc(7.5, 7, 2, 0xc86428); }
+        });
+        rp("^stem_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            int c = 0x9ab43c;
+            double h = 2 + (double)stage * 1.7;
+            int y = 0;
+            while ((double)y < h && y < 15)
+            {
+                t.set(7 + (y % 2), 15 - y, shade(c, 1 - (double)y * 0.02));
+                y += 1;
+            }
+        });
+        p("attached_stem", t =>
+        {
+            t.clearAlpha();
+            for (int y = 8; y < 16; y++) { t.set(7, y, 0x86a032); }
+            t.hline(8, 7, 13, 0x86a032);
+        });
+        rp("^nether_wart_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            for (int i = 0; i < (6 + stage * 5); i++)
+            {
+                int x = 1 + (int)(t.rand(i, 0) * 14), y = 9 - stage + (int)(t.rand(i, 1) * (double)(6 + stage));
+                t.set(x, Math.Min(15, y + 6), 0xa01818);
+                if (t.rand(i, 2) < 0.4) { t.set(x, Math.Min(15, y + 7), 0xc23030); }
+            }
+        });
+        p("melon_side", t => { t.blotch(0x71aa22, 0.08, 2); foreach (int x in new[] { 2, 6, 10, 14 }) { t.vline(x, 0, 15, 0x5a8c1a); } t.speckle(0x9ec83c, 10); });
+        p("melon_top", t => { t.blotch(0x7ab426, 0.08, 2); t.disc(7.5, 7.5, 2, 0x5a8c1a); });
+        p("pumpkin_side", t =>
+        {
+            t.blotch(0xd87e1c, 0.07, 2);
+            foreach (int x in new[] { 3, 8, 13 }) { t.vline(x, 1, 14, 0xb8650f); }
+            t.hline(0, 0, 15, 0xb8650f); t.hline(15, 0, 15, 0xb8650f);
+        });
+        p("pumpkin_top", t => { t.blotch(0xc8741a, 0.07, 2); t.disc(7.5, 7.5, 2, 0x5a7a1c); t.set(7, 7, 0x4a6516); });
+        p("carved_pumpkin", t =>
+        {
+            paintInto(t, "pumpkin_side");
+            t.rect(3, 4, 5, 6, 0x3a2408); t.rect(10, 4, 12, 6, 0x3a2408); t.rect(5, 9, 10, 11, 0x3a2408);
+            t.set(5, 9, 0xd87e1c); t.set(10, 9, 0xd87e1c); t.set(7, 11, 0xd87e1c);
+        });
+        p("jack_o_lantern", t =>
+        {
+            paintInto(t, "pumpkin_side");
+            t.rect(3, 4, 5, 6, 0xffd83c); t.rect(10, 4, 12, 6, 0xffd83c); t.rect(5, 9, 10, 11, 0xffd83c);
+            t.set(5, 9, 0xd87e1c); t.set(10, 9, 0xd87e1c);
+        });
+        rp("^cocoa_stage(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            int c = stage == 0 ? 0x6a9a3c : stage == 1 ? 0xb8862c : 0xc06820;
+            int size = 3 + stage * 2;
+            t.rect(8 - size / 2, 4, 8 + size / 2 - 1, 4 + size + 1, c);
+            t.vline(7, 0, 3, 0x5a7a2c);
+            t.rect(8 - size / 2, 4, 8 + size / 2 - 1, 4, shade(c, 1.15));
+        });
+
+        // --- mushroom blocks ---
+        p("brown_mushroom_block", t => { t.blotch(0x946848, 0.07, 4); t.border(shade(0x946848, 0.88)); });
+        p("red_mushroom_block", t => { t.blotch(0xb82c2a, 0.07, 4); t.speckle(0xf0e8dc, 12); });
+        p("mushroom_stem", t => { t.blotch(0xd8d2c4, 0.05, 4); foreach (int x in new[] { 2, 6, 10, 14 }) { t.vline(x, 0, 15, shade(0xd8d2c4, 0.9)); } });
+
+        // --- functional blocks ---
+        p("crafting_table_top", t => { paintInto(t, "oak_planks"); t.border(0x6a5530); t.rect(3, 3, 12, 12, shade(C_OAK, 1.05)); t.rect(4, 4, 11, 11, shade(C_OAK, 0.95)); });
+        p("crafting_table_side", t => { paintInto(t, "oak_planks"); t.rect(3, 3, 7, 8, 0x7a5c34); t.rect(9, 3, 12, 8, 0x9a7a48); });
+        p("crafting_table_front", t => { paintInto(t, "oak_planks"); t.rect(3, 3, 6, 7, 0x9a7a48); t.rect(9, 4, 12, 8, 0x7a5c34); });
+        p("furnace_top", t => { t.blotch(shade(C_STONE, 0.95), 0.08); t.border(shade(C_STONE, 0.8)); });
+        p("furnace_side", t => { t.blotch(C_STONE, 0.08); t.border(shade(C_STONE, 0.75)); t.hline(8, 1, 14, shade(C_STONE, 0.85)); });
+        p("furnace_front", t => { paintInto(t, "furnace_side"); t.rect(4, 8, 11, 14, 0x202020); t.rect(5, 6, 10, 7, 0x303030); });
+        p("furnace_front_lit", t =>
+        {
+            paintInto(t, "furnace_side");
+            t.rect(4, 8, 11, 14, 0x301808); t.rect(5, 6, 10, 7, 0x303030);
+            for (int x = 4; x <= 11; x++)
+            {
+                int h = (int)(t.rand(x, 0) * 3);
+                t.vline(x, 11 - h, 14, x % 2 != 0 ? 0xff9a2c : 0xffc84c);
+            }
+        });
+        p("blast_furnace_top", t => { t.blotch(0x585858, 0.07); t.border(0x3c3c3c); });
+        p("blast_furnace_side", t => { t.blotch(0x676767, 0.07); t.border(0x444444); t.hline(7, 1, 14, 0x4c4c4c); });
+        p("blast_furnace_front", t => { paintInto(t, "blast_furnace_side"); t.rect(4, 9, 11, 13, 0x18181c); t.rect(3, 4, 12, 6, 0x303034); });
+        p("blast_furnace_front_lit", t =>
+        {
+            paintInto(t, "blast_furnace_side");
+            t.rect(4, 9, 11, 13, 0x401c08);
+            for (int x = 4; x <= 11; x++) { t.set(x, 12 + (x % 2), 0xffb84c); }
+            t.rect(3, 4, 12, 6, 0x303034);
+        });
+        p("smoker_top", t => { t.blotch(0x5c5347, 0.08); t.border(0x423a30); });
+        p("smoker_bottom", t => { t.blotch(0x55493c, 0.08); });
+        p("smoker_side", t => { t.blotch(0x6a5d4c, 0.08); t.border(0x4a4034); foreach (int y in new[] { 4, 11 }) { t.hline(y, 1, 14, 0x57493a); } });
+        p("smoker_front", t => { paintInto(t, "smoker_side"); t.rect(4, 8, 11, 14, 0x241a10); t.rect(5, 5, 10, 7, 0x38302a); });
+        p("smoker_front_lit", t =>
+        {
+            paintInto(t, "smoker_side");
+            t.rect(4, 8, 11, 14, 0x38200a);
+            for (int x = 5; x <= 10; x++) { t.set(x, 12 - (x % 2), 0xffa83c); }
+            t.rect(5, 5, 10, 7, 0x38302a);
+        });
+        p("chest_side", t => { t.planks(0x9a6b35); t.border(0x5c3c1c); t.rect(6, 7, 9, 10, 0x6a6a6a); t.rect(7, 7, 8, 9, 0x8a8a8a); });
+        p("ender_chest_side", t => { t.blotch(0x10211e, 0.1, 3); t.border(0x081210); t.rect(6, 7, 9, 10, 0x1c5c50); t.set(7, 8, 0x39e8c8); t.set(8, 8, 0x39e8c8); });
+        p("barrel_side", t => { t.planks(0x8a6234); foreach (int y in new[] { 2, 13 }) { t.hline(y, 0, 15, 0x4c3418); } });
+        p("barrel_top", t => { t.blotch(0x9a7040, 0.08); t.border(0x4c3418); t.rect(4, 4, 11, 11, shade(0x9a7040, 0.88)); t.hline(7, 2, 13, 0x6a4c24); });
+        p("barrel_top_open", t => { paintInto(t, "barrel_top"); t.rect(3, 3, 12, 12, 0x241808); });
+        p("barrel_bottom", t => { t.blotch(0x84602e, 0.08); t.border(0x4c3418); });
+        p("bookshelf", t =>
+        {
+            paintInto(t, "oak_planks");
+            int[] bookCols = { 0xc23a3a, 0x3a64c2, 0x3aa44a, 0xc2a43a, 0x8a4ac2, 0xd8d8d8 };
+            foreach (int row in new[] { 2, 9 })
+            {
+                t.rect(1, row, 14, row + 4, 0x3c2c14);
+                int x = 1;
+                while (x <= 13)
+                {
+                    int w = 1 + (int)(t.rand(x, row) * 2);
+                    int c = bookCols[(int)(t.rand(x, row, 3) * (double)bookCols.Length)];
+                    int dx = 0;
+                    while (dx < w && x + dx <= 14)
+                    {
+                        t.vline(x + dx, row, row + 4, dx == 0 ? c : shade(c, 0.85));
+                        dx += 1;
+                    }
+                    if (t.rand(x, row, 5) < 0.18) { t.rect(x, row, x + w - 1, row + 4, 0x3c2c14); }
+                    x += w;
+                }
+            }
+        });
+        p("chiseled_bookshelf_top", t => { paintInto(t, "oak_planks"); t.border(0x6a5530); });
+        p("chiseled_bookshelf_side", t => { paintInto(t, "oak_planks"); t.rect(2, 2, 13, 13, 0x8a6a3c); });
+        p("chiseled_bookshelf_empty", t => { paintInto(t, "oak_planks"); t.rect(1, 2, 14, 6, 0x3c2c14); t.rect(1, 9, 14, 13, 0x3c2c14); });
+        p("chiseled_bookshelf_occupied", t => { paintInto(t, "bookshelf"); });
+        p("enchanting_table_top", t =>
+        {
+            t.blotch(0x2a2025, 0.08); t.border(0x4a3a42);
+            int c = 0xd84a4a;
+            t.rect(3, 3, 12, 12, 0x1c1418);
+            t.disc(7.5, 7.5, 3, c);
+            t.disc(7.5, 7.5, 1.4, 0xf8f8f0);
+        });
+        p("enchanting_table_side", t => { t.blotch(0x2a2025, 0.07); t.hline(0, 0, 15, 0xc8b8c8); t.rect(3, 5, 5, 8, 0xc23a3a); t.rect(9, 6, 12, 9, 0xc23a3a); t.speckle(0x8862bf, 6); });
+        p("enchanting_table_bottom", t => { t.blotch(0x1c1418, 0.06); });
+        p("anvil_top", t => { t.blotch(0x404040, 0.06); t.rect(2, 4, 13, 11, 0x4c4c4c); t.border(0x2c2c2c); });
+        p("chipped_anvil_top", t => { paintInto(t, "anvil_top"); crack(t, 0x252525); });
+        p("damaged_anvil_top", t => { paintInto(t, "anvil_top"); crack(t, 0x202020); t.rect(7, 2, 10, 5, 0x252525); });
+        p("anvil_side", t => { t.blotch(0x3c3c3c, 0.07); t.rect(0, 0, 15, 3, 0x484848); t.rect(4, 4, 11, 9, 0x333333); t.rect(2, 10, 13, 15, 0x424242); });
+        p("grindstone_side", t => { t.blotch(0x8a8a8a, 0.09); t.disc(7.5, 7.5, 6, 0x767676); t.disc(7.5, 7.5, 2, 0x5c5c5c); });
+        p("grindstone_pivot", t => { t.blotch(0x767676, 0.08); t.rect(5, 5, 10, 10, 0x6a4c24); });
+        p("stonecutter_top", t => { t.blotch(shade(C_STONE, 0.96), 0.07); t.border(shade(C_STONE, 0.8)); t.hline(7, 1, 14, 0xb8b8c0); t.hline(8, 1, 14, 0x8a8a92); });
+        p("stonecutter_side", t => { t.blotch(C_STONE, 0.07); t.rect(0, 8, 15, 15, shade(C_STONE, 0.9)); t.hline(0, 0, 15, 0x9a9aa2); });
+        p("stonecutter_bottom", t => { t.blotch(shade(C_STONE, 0.9), 0.07); });
+        p("smithing_table_top", t => { t.blotch(0x3a3440, 0.06); t.border(0x241f2c); t.rect(3, 3, 7, 7, 0x57505e); t.rect(9, 9, 12, 12, 0x6c6474); });
+        p("smithing_table_front", t => { t.blotch(0x4a4450, 0.07); t.hline(0, 0, 15, 0x241f2c); t.rect(3, 4, 6, 8, 0xc8c8d0); t.rect(9, 5, 12, 9, 0x8a8a94); });
+        p("smithing_table_side", t => { t.blotch(0x4a4450, 0.07); t.hline(0, 0, 15, 0x241f2c); t.rect(2, 9, 13, 15, 0x3c3030); });
+        p("smithing_table_bottom", t => { t.blotch(0x3c3030, 0.07); });
+        p("fletching_table_top", t => { t.blotch(0xc8b88a, 0.06); t.border(0xa89868); t.rect(3, 3, 12, 5, 0xe0d8b8); });
+        p("fletching_table_front", t =>
+        {
+            t.blotch(0xd0c094, 0.06);
+            t.px(new[] { "  F  ", " FFF ", "FFFFF", "  |  ", "  |  " }, new Dictionary<char, int> { { 'F', 0xe8e8e8 }, { '|', 0x8a6a3c } }, 5, 4);
+        });
+        p("fletching_table_side", t => { t.blotch(0xd0c094, 0.06); t.rect(3, 4, 5, 11, 0xb89858); t.rect(9, 4, 12, 7, 0xb89858); });
+        p("cartography_table_top", t => { t.blotch(0x6a5538, 0.06); t.rect(2, 2, 13, 13, 0xd8cfa8); t.rect(4, 4, 8, 8, 0xb8a878); t.hline(6, 4, 11, 0x8a7a52); });
+        p("cartography_table_side", t => { t.blotch(0x7a6240, 0.07); t.hline(0, 0, 15, 0x584830); t.rect(3, 4, 12, 10, 0x9a8a62); });
+        p("loom_top", t => { t.blotch(0xb89868, 0.06); t.rect(2, 2, 13, 13, 0xe8e0d0); foreach (int x in new[] { 4, 7, 10 }) { t.vline(x, 2, 13, 0xc8b8a0); } });
+        p("loom_front", t => { t.blotch(0x9a7a4c, 0.07); t.rect(2, 2, 13, 8, 0xd8d0c0); foreach (int y in new[] { 3, 5, 7 }) { t.hline(y, 2, 13, 0xb8a890); } });
+        p("loom_side", t => { t.blotch(0x9a7a4c, 0.07); t.rect(3, 2, 12, 8, 0x7a5c34); });
+        p("loom_bottom", t => { t.blotch(0x8a6a40, 0.07); });
+        p("composter_top", t => { paintInto(t, "oak_planks"); t.rect(2, 2, 13, 13, 0x241808); });
+        p("composter_side", t => { t.planks(0x8a6a3a); foreach (int x in new[] { 0, 5, 10, 15 }) { t.vline(x, 0, 15, 0x5c4420); } });
+        p("composter_bottom", t => { t.blotch(0x6a4e26, 0.09); });
+        p("composter_compost", t => { t.blotch(0x4c3a1a, 0.12, 2); t.speckle(0x6a5226, 14); t.speckle(0x3c8a2a, 6); });
+        p("composter_ready", t => { paintInto(t, "composter_compost"); t.speckle(0xc8c8c8, 8); });
+        p("cauldron_side", t => { t.blotch(0x3a3a3a, 0.07); t.border(0x262626); t.rect(0, 0, 2, 15, 0x303030); t.rect(13, 0, 15, 15, 0x303030); t.hline(3, 0, 15, 0x4a4a4a); });
+        p("cauldron_top", t => { t.blotch(0x303030, 0.06); t.rect(2, 2, 13, 13, 0x1c1c1c); });
+        p("cauldron_bottom", t => { t.blotch(0x2c2c2c, 0.06); });
+        p("brewing_stand", t => { t.clearAlpha(); t.vline(7, 2, 13, 0x8a8a52); t.set(7, 1, 0xd8c83c); t.rect(2, 12, 5, 14, 0x5c5c5c); t.rect(10, 12, 13, 14, 0x5c5c5c); });
+        p("jukebox_top", t => { t.planks(0x6a4226); t.disc(7.5, 7.5, 4.5, 0x1c1410); t.disc(7.5, 7.5, 1.5, 0xc8a84a); });
+        p("jukebox_side", t => { t.planks(0x6a4226); t.border(0x44290f); t.hline(11, 2, 13, 0x2a1a0c); });
+        p("note_block", t => { t.planks(0x6a4226); t.border(0x44290f); t.disc(7.5, 7.5, 3, 0x2a1a0c); t.set(7, 7, 0xd8c83c); });
+        p("lectern_top", t => { t.planks(0x9a7444); t.rect(3, 3, 12, 11, 0xe8e0c8); t.hline(7, 4, 11, 0xb8a880); });
+        p("lectern_side", t => { t.planks(0x8a6a3c); t.rect(4, 0, 11, 4, 0x7a5a30); });
+        p("bell_body", t => { t.blotch(0xe8c84a, 0.07, 3); t.hline(11, 0, 15, 0xb89a2c); t.border(0xc8a834); });
+        p("beacon", t => { t.fill(0x18403c); t.border(0x0e2624); t.rect(2, 2, 13, 13, 0x2a8a80); t.rect(4, 4, 11, 11, 0x4ee8dc); t.rect(6, 6, 9, 9, 0xc8fff8); });
+        p("conduit", t => { t.blotch(0x9a8a6a, 0.08); t.disc(7.5, 7.5, 3.5, 0x18403c); t.disc(7.5, 7.5, 1.5, 0x4ee8dc); });
+        p("lodestone_top", t => { t.blotch(0x6a6a72, 0.07); t.border(0x44444c); t.rect(4, 4, 11, 11, 0x52525a); t.rect(6, 6, 9, 9, 0x7a7a84); });
+        p("lodestone_side", t => { t.blotch(0x62626a, 0.07); t.border(0x44444c); });
+        p("respawn_anchor_top", t => { t.blotch(0x241038, 0.1); t.border(0x3c1c5c); t.rect(3, 3, 12, 12, 0x4a1d80); t.speckle(0x8a3cf0, 14); t.speckle(0xc88af8, 6); });
+        p("respawn_anchor_top_off", t => { t.blotch(0x241038, 0.1); t.border(0x3c1c5c); t.rect(3, 3, 12, 12, 0x180a28); });
+        p("respawn_anchor_side", t =>
+        {
+            t.blotch(0x1c1024, 0.09);
+            t.hline(0, 0, 15, 0x3c1c5c);
+            t.rect(0, 8, 15, 15, 0x14091c);
+            int x = 1;
+            while (x < 15) { t.set(x, 5, 0x8a3cf0); x += 3; }
+        });
+        p("respawn_anchor_bottom", t => { t.blotch(0x14091c, 0.08); });
+        p("flower_pot", t => { t.clearAlpha(); t.rect(5, 10, 10, 15, 0x9a5838); t.rect(6, 10, 9, 11, 0x3c2410); t.rect(4, 9, 11, 9, 0xa86040); });
+        p("decorated_pot_side", t => { t.blotch(0x9a5838, 0.08); t.border(0x7a4228); t.hline(2, 1, 14, 0xb87048); t.rect(4, 5, 11, 12, 0x8a4c30); });
+        p("decorated_pot_top", t => { t.blotch(0x9a5838, 0.08); t.disc(7.5, 7.5, 4, 0x3c2410); t.border(0x7a4228); });
+        p("spawner", t =>
+        {
+            t.fill(0x1a2c38); t.border(0x0c161e);
+            int y = 2;
+            while (y < 14)
+            {
+                int x = 2;
+                while (x < 14) { t.rect(x, y, x + 1, y + 1, 0x2c4456); x += 3; }
+                y += 3;
+            }
+            t.speckle(0x3c5c74, 8);
+        });
+        p("slime_block", t => { t.fill(0x6fc05c, 200); t.border(shade(0x6fc05c, 0.85)); t.rect(4, 4, 11, 11, 0x84d46e, 220); });
+        p("honey_block", t => { t.fill(0xf0a83c, 220); t.border(0xd88c24); t.rect(4, 4, 11, 11, 0xf8c05c, 235); });
+        p("honeycomb_block", t =>
+        {
+            t.fill(0xe89a2c);
+            for (int row = 0; row < 4; row++)
+            {
+                for (int col = 0; col < 4; col++)
+                {
+                    int x = col * 4 + (row % 2) * 2, y = row * 4;
+                    t.disc((double)x + 1.5, (double)y + 1.5, 1.6, 0xc87818);
+                    t.set(x + 1, y + 1, 0xf8c860);
+                }
+            }
+        });
+        p("bee_nest_front", t => { t.blotch(0xc8a05c, 0.09, 2); foreach (int y in new[] { 2, 7, 12 }) { t.hline(y, 0, 15, 0xa8824a); } t.rect(6, 9, 9, 12, 0x3c2c10); });
+        p("bee_nest_side", t => { t.blotch(0xc8a05c, 0.09, 2); foreach (int y in new[] { 2, 7, 12 }) { t.hline(y, 0, 15, 0xa8824a); } });
+        p("bee_nest_top", t => { t.blotch(0xd8b878, 0.08, 2); t.disc(7.5, 7.5, 3.5, 0xb8964e); });
+        p("bee_nest_bottom", t => { t.blotch(0xb8965c, 0.08, 2); });
+        p("beehive_front", t => { paintInto(t, "oak_planks"); t.rect(6, 9, 9, 12, 0x3c2c10); t.hline(7, 0, 15, 0x6a5530); });
+        p("beehive_side", t => { paintInto(t, "oak_planks"); t.hline(7, 0, 15, 0x6a5530); });
+        p("beehive_end", t => { paintInto(t, "oak_planks"); t.border(0x6a5530); });
+        p("hay_block_side", t =>
+        {
+            t.blotch(0xc8a834, 0.12, 2);
+            foreach (int y in new[] { 5, 11 }) { t.hline(y, 0, 15, 0x8a701c); }
+            for (int i = 0; i < 14; i++) { t.set((int)(t.rand(i, 0) * 16), (int)(t.rand(i, 1) * 16), 0xe0c454); }
+        });
+        p("hay_block_top", t => { t.blotch(0xb89a2c, 0.1, 2); t.border(0x8a701c); t.rect(5, 5, 10, 10, 0xc8a834); });
+        p("target_side", t => { t.blotch(0xe0d8c8, 0.05); t.disc(7.5, 7.5, 6, 0xd03030); t.disc(7.5, 7.5, 4, 0xe0d8c8); t.disc(7.5, 7.5, 2, 0xd03030); });
+        p("target_top", t => { paintInto(t, "target_side"); });
+        p("tnt_side", t =>
+        {
+            t.fill(0xc8412e);
+            foreach (int y in new[] { 0, 1, 14, 15 }) { t.hline(y, 0, 15, 0xa83020); }
+            t.rect(2, 5, 13, 9, 0xe8e0d0);
+            t.px(new[] { "### # # ###", " #  ##   # ", " #  # #  # " }, new Dictionary<char, int> { { '#', 0x202020 } }, 2, 6);
+        });
+        p("tnt_top", t => { t.fill(0xc8412e); t.disc(7.5, 7.5, 3, 0x8a2418); t.set(7, 7, 0x3c1008); t.set(8, 8, 0x3c1008); });
+        p("tnt_bottom", t => { t.blotch(0xa83020, 0.07); });
+        p("cake_top", t => { t.fill(0xf0e8e0); t.speckle(0xd03030, 8); t.border(0xe0d0c8); });
+        p("cake_side", t => { t.rect(0, 0, 15, 7, 0xf0e8e0); t.rect(0, 8, 15, 15, 0xa86838); t.hline(7, 0, 15, 0xd84848); t.hline(8, 0, 15, 0xc84040); });
+        p("cake_bottom", t => { t.blotch(0xa86838, 0.06); });
+
+        // --- torches / lanterns ---
+        p("torch", t => { t.clearAlpha(); t.vline(7, 6, 15, 0x7a5c34); t.vline(8, 6, 15, 0x6a4c2a); t.rect(7, 4, 8, 5, 0xffd75c); t.set(7, 3, 0xffaa2c); t.set(8, 3, 0xff8a1c); });
+        p("soul_torch", t => { t.clearAlpha(); t.vline(7, 6, 15, 0x7a5c34); t.vline(8, 6, 15, 0x6a4c2a); t.rect(7, 4, 8, 5, 0x5ce8e8); t.set(7, 3, 0x2cb8c8); t.set(8, 3, 0x1c98b0); });
+        p("redstone_torch", t => { t.clearAlpha(); t.vline(7, 6, 15, 0x7a5c34); t.vline(8, 6, 15, 0x6a4c2a); t.rect(7, 4, 8, 5, 0xff3c2c); t.set(7, 3, 0xffa89c); });
+        p("redstone_torch_off", t => { t.clearAlpha(); t.vline(7, 6, 15, 0x7a5c34); t.vline(8, 6, 15, 0x6a4c2a); t.rect(7, 4, 8, 5, 0x6a1410); });
+        p("lantern", t =>
+        {
+            t.clearAlpha();
+            t.rect(5, 6, 10, 13, 0x4a4a52); t.rect(6, 7, 9, 12, 0xffc84c); t.rect(6, 4, 9, 5, 0x3a3a42);
+            t.set(7, 2, 0x2c2c34); t.set(8, 3, 0x2c2c34); t.set(5, 6, 0x3a3a42); t.set(10, 6, 0x3a3a42);
+        });
+        p("soul_lantern", t => { paintInto(t, "lantern"); t.rect(6, 7, 9, 12, 0x4ce0e0); });
+        p("chain", t => { t.clearAlpha(); t.rect(6, 0, 7, 3, 0x44444c); t.rect(8, 3, 9, 7, 0x52525a); t.rect(6, 7, 7, 11, 0x44444c); t.rect(8, 11, 9, 15, 0x52525a); });
+        p("campfire_log", t => { t.planks(0x6a4a26); t.rect(0, 6, 15, 9, 0x3c2a12); });
+        p("soul_campfire_log", t => { t.planks(0x6a4a26); t.rect(0, 6, 15, 9, 0x1c3a3c); });
+        p("campfire_fire", t =>
+        {
+            t.clearAlpha();
+            for (int x = 0; x < 16; x++)
+            {
+                int h = 4 + (int)(t.rand(x, 0) * 9);
+                int y = 15;
+                while (y > 15 - h)
+                {
+                    double f = (double)(15 - y) / (double)h;
+                    t.set(x, y, f < 0.4 ? 0xff8a1c : f < 0.7 ? 0xffc23c : 0xfff09c);
+                    y -= 1;
+                }
+            }
+        });
+        p("soul_campfire_fire", t =>
+        {
+            t.clearAlpha();
+            for (int x = 0; x < 16; x++)
+            {
+                int h = 4 + (int)(t.rand(x, 0) * 9);
+                int y = 15;
+                while (y > 15 - h)
+                {
+                    double f = (double)(15 - y) / (double)h;
+                    t.set(x, y, f < 0.4 ? 0x1c98b0 : f < 0.7 ? 0x4ce0e0 : 0xc8fcfc);
+                    y -= 1;
+                }
+            }
+        });
+        p("fire", t =>
+        {
+            t.clearAlpha();
+            for (int x = 0; x < 16; x++)
+            {
+                int h = 6 + (int)(t.rand(x, 0) * 10);
+                int y = 15;
+                while (y > 15 - h)
+                {
+                    double f = (double)(15 - y) / (double)h;
+                    if (t.rand(x, y) < 0.85) { t.set(x, y, f < 0.35 ? 0xff6a0c : f < 0.65 ? 0xffa01c : 0xffe05c); }
+                    y -= 1;
+                }
+            }
+        });
+        p("soul_fire", t =>
+        {
+            t.clearAlpha();
+            for (int x = 0; x < 16; x++)
+            {
+                int h = 6 + (int)(t.rand(x, 0) * 10);
+                int y = 15;
+                while (y > 15 - h)
+                {
+                    double f = (double)(15 - y) / (double)h;
+                    if (t.rand(x, y) < 0.85) { t.set(x, y, f < 0.35 ? 0x0c6a8a : f < 0.65 ? 0x2cb8c8 : 0x9cf0f0); }
+                    y -= 1;
+                }
+            }
+        });
+
+        // --- redstone ---
+        p("redstone_dust_dot", t => { t.clearAlpha(); t.disc(7.5, 7.5, 2.4, 0xff2200); t.set(7, 7, 0xff6644); });
+        p("redstone_dust_line", t => { t.clearAlpha(); t.rect(0, 7, 15, 8, 0xff2200); t.hline(7, 0, 15, 0xdd1c00); });
+        p("repeater", t => { t.blotch(0x8a8a92, 0.06); t.border(0x6a6a72); t.rect(7, 2, 8, 3, 0x6a1410); t.rect(7, 9, 8, 10, 0x6a1410); t.hline(7, 2, 13, 0x3c3c44); });
+        p("repeater_on", t => { t.blotch(0x9a9aa2, 0.06); t.border(0x6a6a72); t.rect(7, 2, 8, 3, 0xff3c2c); t.rect(7, 9, 8, 10, 0xff3c2c); t.hline(7, 2, 13, 0x3c3c44); });
+        p("comparator", t =>
+        {
+            t.blotch(0x8a8a92, 0.06); t.border(0x6a6a72);
+            foreach (var (x, y) in new[] { (3, 11), (12, 11), (7, 3) }) { t.rect(x, y, x + 1, y + 1, 0x6a1410); }
+        });
+        p("comparator_on", t =>
+        {
+            t.blotch(0x9a9aa2, 0.06); t.border(0x6a6a72);
+            foreach (var (x, y) in new[] { (3, 11), (12, 11), (7, 3) }) { t.rect(x, y, x + 1, y + 1, 0xff3c2c); }
+        });
+        p("lever", t => { t.clearAlpha(); t.rect(4, 10, 11, 15, 0x6a6a6a); t.vline(7, 2, 9, 0x8a6a3c); t.vline(8, 2, 9, 0x7a5c34); t.set(7, 1, 0xc84040); t.set(8, 1, 0xc84040); });
+        p("tripwire_hook", t => { t.clearAlpha(); t.vline(7, 8, 15, 0x8a8a8a); t.rect(6, 4, 9, 7, 0x9a7444); t.set(7, 2, 0x6a6a6a); t.set(8, 3, 0x6a6a6a); });
+        p("tripwire", t => { t.clearAlpha(); t.hline(7, 0, 15, 0xc8c8c8); });
+        p("observer_top", t => { t.blotch(0x6a6a6a, 0.07); t.rect(2, 6, 13, 9, 0x3c3c3c); });
+        p("observer_side", t => { t.blotch(0x5c5c5c, 0.07); t.hline(7, 0, 15, 0x444444); });
+        p("observer_front", t => { t.blotch(0x6a6a6a, 0.07); t.rect(2, 2, 13, 5, 0x8a2418); t.rect(4, 3, 11, 4, 0xc8412e); t.rect(2, 10, 13, 13, 0x3c3c3c); });
+        p("observer_back", t => { t.blotch(0x5c5c5c, 0.07); t.rect(6, 6, 9, 9, 0x6a1410); });
+        p("observer_back_lit", t => { t.blotch(0x5c5c5c, 0.07); t.rect(6, 6, 9, 9, 0xff3c2c); });
+        p("dispenser_front", t => { paintInto(t, "furnace_side"); t.disc(7.5, 7.5, 4, 0x202020); t.disc(7.5, 7.5, 2.2, 0x3c3c3c); });
+        p("dispenser_front_vertical", t => { paintInto(t, "furnace_top"); t.disc(7.5, 7.5, 4, 0x202020); t.disc(7.5, 7.5, 2.2, 0x3c3c3c); });
+        p("dropper_front", t => { paintInto(t, "furnace_side"); t.rect(4, 4, 11, 11, 0x202020); t.rect(6, 6, 9, 9, 0x3c3c3c); });
+        p("dropper_front_vertical", t => { paintInto(t, "furnace_top"); t.rect(4, 4, 11, 11, 0x202020); t.rect(6, 6, 9, 9, 0x3c3c3c); });
+        p("hopper_outside", t => { t.blotch(0x3a3a3a, 0.06); t.rect(0, 10, 15, 15, 0x2c2c2c); });
+        p("hopper_top", t => { t.blotch(0x3a3a3a, 0.06); t.rect(2, 2, 13, 13, 0x1c1c1c); });
+        p("redstone_lamp", t => { t.blotch(0x46280e, 0.1, 2); t.rect(3, 3, 12, 12, 0x6a3c1c); t.rect(5, 5, 10, 10, 0x8a5424); t.border(0x33200c); });
+        p("redstone_lamp_on", t => { t.blotch(0xa86420, 0.08, 2); t.rect(3, 3, 12, 12, 0xe8a04c); t.rect(5, 5, 10, 10, 0xffd88c); t.border(0x7a4818); });
+        p("daylight_detector_top", t =>
+        {
+            t.fill(0x1c2c4c); t.border(0x6a5c3c);
+            int y = 2;
+            while (y < 14)
+            {
+                int x = 2;
+                while (x < 14) { t.rect(x, y, x + 2, y + 2, 0x2c4474); x += 4; }
+                y += 4;
+            }
+        });
+        p("daylight_detector_inverted_top", t =>
+        {
+            t.fill(0x4c3c2c); t.border(0x6a5c3c);
+            int y = 2;
+            while (y < 14)
+            {
+                int x = 2;
+                while (x < 14) { t.rect(x, y, x + 2, y + 2, 0x745c44); x += 4; }
+                y += 4;
+            }
+        });
+        p("daylight_detector_side", t => { t.planks(0x9a7444); t.rect(0, 0, 15, 3, 0xd8d0b8); });
+        p("sculk", t => { t.blotch(0x0c2330, 0.14, 2); t.speckle(0x16424e, 16); t.speckle(0x2ce8e8, 3); });
+        p("sculk_catalyst_top", t => { t.blotch(0x16424e, 0.1, 2); t.speckle(0x52e8d8, 10); t.rect(5, 5, 10, 10, 0xe8f8e0); t.rect(6, 6, 9, 9, 0xc8f0d0); });
+        p("sculk_catalyst_side", t => { t.blotch(0x0c2330, 0.12, 2); t.rect(0, 0, 15, 4, 0x16424e); t.speckle(0x9cf0dc, 8); });
+        p("sculk_catalyst_bottom", t => { paintInto(t, "sculk"); });
+        p("sculk_sensor_top", t => { t.blotch(0x0c3340, 0.1, 2); t.disc(4, 4, 1.4, 0x2ce8e8); t.disc(11, 4, 1.4, 0x2ce8e8); t.disc(4, 11, 1.4, 0x2ce8e8); t.disc(11, 11, 1.4, 0x2ce8e8); });
+        p("sculk_sensor_side", t => { t.blotch(0x0c2c38, 0.1, 2); t.rect(0, 8, 15, 15, 0x0a2430); });
+        p("sculk_sensor_bottom", t => { paintInto(t, "sculk"); });
+        p("calibrated_sculk_sensor_top", t => { paintInto(t, "sculk_sensor_top"); t.rect(6, 2, 9, 7, 0x8a62c8); });
+        p("calibrated_sculk_sensor_side", t => { paintInto(t, "sculk_sensor_side"); t.rect(6, 0, 9, 4, 0x8a62c8); });
+        p("sculk_shrieker_top", t => { t.blotch(0x0c2330, 0.1, 2); t.border(0xc8d0c8); t.disc(7.5, 7.5, 4, 0x041018); t.disc(7.5, 7.5, 1.8, 0x16424e); });
+        p("sculk_shrieker_side", t => { t.blotch(0x10303c, 0.1, 2); t.hline(0, 0, 15, 0xc8d0c8); });
+        p("sculk_shrieker_bottom", t => { paintInto(t, "sculk"); });
+        rp("^(rail|powered_rail|detector_rail|activator_rail)(_on)?$", (t, m) =>
+        {
+            t.clearAlpha();
+            int tie = 0x7a5c34;
+            foreach (int y in new[] { 1, 5, 9, 13 }) { t.rect(2, y, 13, y + 1, tie); }
+            int railC = m[1] == "rail" ? 0x9a9a9a : m[2] != null ? 0xd8a84c : 0x8a7a5a;
+            t.vline(3, 0, 15, railC); t.vline(4, 0, 15, shade(railC, 0.8));
+            t.vline(11, 0, 15, railC); t.vline(12, 0, 15, shade(railC, 0.8));
+            if (m[1] == "detector_rail") { t.rect(6, 6, 9, 9, m[2] != null ? 0xff5c4c : 0x6a1410); }
+            if (m[1] == "powered_rail") { t.hline(7, 5, 10, m[2] != null ? 0xff3c2c : 0x6a1410); }
+            if (m[1] == "activator_rail")
+            {
+                t.vline(7, 2, 13, m[2] != null ? 0xff3c2c : 0x6a1410);
+                t.vline(8, 2, 13, m[2] != null ? 0xc82c1c : 0x4a0e0a);
+            }
+        });
+
+        // --- doors / trapdoors ---
+        rp("^(\\w+?)_door$", (t, m) =>
+        {
+            WoodColor? wood = WOOD_COLORS.TryGetValue(m[1] ?? "", out WoodColor wv) ? wv : (WoodColor?)null;
+            if (wood == null && m[1] != "iron") { fallbackPaint(t); return; }
+            int c = m[1] == "iron" ? 0xc8c8c8 : wood.Value.plank;
+            t.planks(c);
+            t.border(shade(c, 0.7));
+            t.rect(3, 2, 12, 6, shade(c, 0.88));
+            t.rect(4, 3, 11, 5, shade(c, 1.06));
+            t.rect(3, 9, 12, 13, shade(c, 0.88));
+            t.rect(4, 10, 11, 12, shade(c, 1.06));
+        });
+        rp("^(\\w+?)_trapdoor$", (t, m) =>
+        {
+            WoodColor? wood = WOOD_COLORS.TryGetValue(m[1] ?? "", out WoodColor wv) ? wv : (WoodColor?)null;
+            int c = m[1] == "iron" ? 0xc8c8c8 : (wood != null ? wood.Value.plank : 0xb8945f);
+            if (m[1] == "iron")
+            {
+                t.blotch(c, 0.05);
+                t.border(shade(c, 0.75));
+                t.rect(4, 4, 11, 11, shade(c, 0.9));
+                t.rect(6, 6, 9, 9, shade(c, 1.05));
+            }
+            else
+            {
+                t.planks(c);
+                t.border(shade(c, 0.7));
+                t.rect(6, 2, 9, 13, shade(c, 0.85));
+                t.rect(2, 6, 13, 9, shade(c, 0.85));
+            }
+        });
+
+        // --- misc ---
+        p("ladder", t =>
+        {
+            t.clearAlpha();
+            t.vline(2, 0, 15, 0x8a6a3c); t.vline(3, 0, 15, 0x7a5c34);
+            t.vline(12, 0, 15, 0x8a6a3c); t.vline(13, 0, 15, 0x7a5c34);
+            foreach (int y in new[] { 2, 6, 10, 14 }) { t.rect(4, y, 11, y + 1, 0x9a7a48); }
+        });
+        p("scaffolding_side", t =>
+        {
+            t.clearAlpha();
+            foreach (int x in new[] { 0, 1, 14, 15 }) { t.vline(x, 0, 15, 0xc8a85c); }
+            foreach (int y in new[] { 0, 7, 15 }) { t.hline(y, 0, 15, 0xb8964e); }
+            t.set(4, 3, 0xb8964e); t.set(8, 11, 0xb8964e);
+        });
+        p("scaffolding_top", t =>
+        {
+            t.fill(0xc8a85c); t.border(0xa8854a);
+            int i = 2;
+            while (i < 14) { t.hline(i, 1, 14, 0xb8964e); i += 3; }
+        });
+        p("cobweb", t =>
+        {
+            t.clearAlpha();
+            int c = 0xe8e8e8;
+            for (int i = 0; i < 16; i++) { t.set(i, i, c, 200); t.set(15 - i, i, c, 200); }
+            t.hline(7, 1, 14, c); t.vline(7, 1, 14, c);
+            foreach (int r in new[] { 4, 7 })
+            {
+                t.set(7 - r, 7 - r / 2, c); t.set(7 + r, 7 - r / 2, c);
+                t.set(7 - r / 2, 7 - r, c); t.set(7 + r / 2, 7 + r, c);
+            }
+        });
+        p("pointed_dripstone", t =>
+        {
+            t.clearAlpha();
+            for (int y = 0; y < 16; y++)
+            {
+                int w = Math.Max(0, 3 - y / 5);
+                t.rect(7 - w, y, 8 + w, y, shade(0x866956, 0.9 + t.rand(0, y) * 0.2));
+            }
+        });
+        p("amethyst_cluster", t =>
+        {
+            t.clearAlpha();
+            foreach (var (x, h) in new[] { (3, 8), (7, 12), (11, 7), (5, 5), (13, 4) })
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    t.set(x, 15 - y, y > h - 3 ? 0xc8a8e8 : 0x9a72d0);
+                    t.set(x + 1, 15 - y, 0x8662bf);
+                }
+            }
+        });
+        p("large_amethyst_bud", t =>
+        {
+            t.clearAlpha();
+            foreach (var (x, h) in new[] { (5, 8), (9, 6) })
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    t.set(x, 15 - y, 0xa886d8);
+                    t.set(x + 1, 15 - y, 0x8662bf);
+                }
+            }
+        });
+        p("medium_amethyst_bud", t =>
+        {
+            t.clearAlpha();
+            foreach (var (x, h) in new[] { (6, 5), (10, 4) })
+            {
+                for (int y = 0; y < h; y++) { t.set(x, 15 - y, 0xa886d8); }
+            }
+        });
+        p("small_amethyst_bud", t => { t.clearAlpha(); t.rect(6, 13, 7, 15, 0xa886d8); t.set(10, 14, 0x9a72d0); t.set(10, 15, 0x9a72d0); });
+        p("sniffer_egg", t => { t.blotch(0xb04a3c, 0.1, 3); t.speckle(0x44aa44, 10); t.border(0x8a382e); });
+        p("turtle_egg", t => { t.clearAlpha(); t.disc(7.5, 9, 4.5, 0xe8e8d0); t.speckle(0x9aa86a, 6); });
+        p("frogspawn", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 9; i++)
+            {
+                int x = 2 + (int)(t.rand(i, 0) * 12), y = 2 + (int)(t.rand(i, 1) * 12);
+                t.disc((double)x, (double)y, 1.6, 0x6a7a8a);
+                t.set(x, y, 0x1c1c24);
+            }
+        });
+        p("ochre_froglight_top", t => { froglight(t, 0xf8e8b0); });
+        p("ochre_froglight_side", t => { froglightSide(t, 0xf8e8b0); });
+        p("verdant_froglight_top", t => { froglight(t, 0xc8f0c0); });
+        p("verdant_froglight_side", t => { froglightSide(t, 0xc8f0c0); });
+        p("pearlescent_froglight_top", t => { froglight(t, 0xf0d8f0); });
+        p("pearlescent_froglight_side", t => { froglightSide(t, 0xf0d8f0); });
+        p("mangrove_roots", t =>
+        {
+            t.clearAlpha();
+            for (int i = 0; i < 6; i++)
+            {
+                int x = 1 + i * 2 + (int)(t.rand(i, 0) * 2);
+                t.vline(x, (int)(t.rand(i, 1) * 4), 15, shade(0x583c2e, 0.85 + t.rand(i, 2) * 0.3));
+            }
+            t.hline(15, 0, 15, 0x44291f); t.hline(3, 2, 13, 0x4c3023);
+        });
+        p("mangrove_propagule", t => { t.clearAlpha(); t.vline(7, 2, 12, 0x4a7c3c); t.set(7, 13, 0x6aa04c); t.set(7, 1, 0x386030); });
+        p("lectern_front", t => { t.planks(0x8a6a3c); });
+        p("end_gateway", t => { paintInto(t, "end_portal"); });
+
+        // --- saplings & leftover plants ---
+        rp("^(\\w+?)_sapling$", (t, m) =>
+        {
+            string key = m[1] ?? "";
+            int c = LEAF_COLORS.TryGetValue(key, out int lc) ? lc : 0x59ab30;
+            int real = (key == "oak" || key == "jungle" || key == "dark_oak" || key == "acacia") ? 0x4a8a28 : c;
+            t.clearAlpha();
+            t.vline(7, 9, 15, 0x6a4c2a);
+            t.disc(7.5, 7, 3.2, real);
+            t.disc(6, 5, 1.8, shade(real, 1.15));
+            t.set(9, 8, shade(real, 0.85));
+        });
+        p("tall_grass", t => { t.cross(0x8e8e8e); t.vline(7, 2, 15, 0x868686); t.set(6, 3, 0x9a9a9a); t.set(8, 5, 0x7a7a7a); });
+        p("large_fern", t => { paintInto(t, "fern"); t.vline(7, 1, 4, 0x868686); t.hline(3, 4, 11, 0x7e7e7e); });
+        p("pitcher_crop", t => { t.clearAlpha(); t.vline(7, 10, 15, 0x3a7a4a); t.disc(7.5, 8, 2, 0x4a9ab0); });
+        p("bamboo_sapling", t => { t.clearAlpha(); t.vline(7, 6, 15, 0x82a83c); t.set(8, 5, 0x94c046); t.set(6, 8, 0x94c046); });
+        p("small_dripleaf", t => { t.clearAlpha(); t.disc(7.5, 5, 3.4, 0x8e8e8e); t.vline(7, 8, 15, 0x7a7a7a); });
+        p("piston_side", t => { t.planks(0x9a7444); t.rect(0, 0, 15, 3, 0x8a8a92); t.hline(4, 0, 15, 0x6a6a72); });
+        p("piston_top", t => { t.planks(0xab854f); t.border(0x8a8a92); t.rect(5, 5, 10, 10, shade(0xab854f, 0.9)); });
+        p("piston_top_sticky", t => { paintInto(t, "piston_top"); t.rect(4, 4, 11, 11, 0x6fc05c); t.rect(6, 6, 9, 9, 0x84d46e); });
+        p("moving_piston", t => { t.blotch(0x9a7444, 0.1); });
+        rp("^destroy_(\\d)$", (t, m) =>
+        {
+            int stage = int.Parse(m[1]);
+            t.clearAlpha();
+            int cracks = 2 + stage * 2;
+            for (int i = 0; i < cracks; i++)
+            {
+                int x = (int)(t.rand(i, 0) * 16), y = (int)(t.rand(i, 1) * 16);
+                int len = 3 + stage;
+                for (int j = 0; j < len; j++)
+                {
+                    t.set(x, y, 0x000000, 140 + stage * 10);
+                    x += (int)(t.rand(i, j + 2) * 3) - 1;
+                    y += (int)(t.rand(i, j + 9) * 3) - 1;
+                    x = Math.Max(0, Math.Min(15, x)); y = Math.Max(0, Math.Min(15, y));
+                }
+            }
+        });
+        p("air", t => { t.clearAlpha(); });
+        p("cave_air", t => { t.clearAlpha(); });
+        p("void_air", t => { t.clearAlpha(); });
+
+        // --- particle sprites ---
+        p("smoke_particle", t =>
+        {
+            t.clearAlpha();
+            t.disc(7.5, 7.5, 5.5, 0xffffff);
+            t.disc(5, 5, 2, 0xe8e8e8);
+            for (int i = 0; i < 10; i++)
+            {
+                int x = (int)(t.rand(i, 0) * 16), y = (int)(t.rand(i, 1) * 16);
+                if (t.alphaAt(x, y) > 0) { t.set(x, y, 0xd0d0d0); }
+            }
+        });
+        p("flame_particle", t => { t.clearAlpha(); t.disc(7.5, 9, 4, 0xff8a1c); t.disc(7.5, 10, 2.6, 0xffc23c); t.set(7, 5, 0xff8a1c); t.set(8, 6, 0xffaa2c); t.disc(7.5, 11, 1.2, 0xfff0a0); });
+        p("portal_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 3, 0xffffff); t.disc(7.5, 7.5, 1.4, 0xe8d8f8); });
+        p("crit_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 2.5, 0xffffff); t.set(7, 7, 0xfff8d0); });
+        p("heart_particle", t =>
+        {
+            t.clearAlpha();
+            t.px(new[] { ".RR.RR.", "RRRRRRR", "RRRRRRR", ".RRRRR.", "..RRR..", "...R..." }, new Dictionary<char, int> { { 'R', 0xe83a3a } }, 4, 5);
+            t.set(5, 6, 0xff8a8a);
+        });
+        p("angry_particle", t =>
+        {
+            t.clearAlpha();
+            t.px(new[] { ".SS.SS.", "SSSSSSS", "SSSSSSS", ".SSSSS.", "..SSS..", "...S..." }, new Dictionary<char, int> { { 'S', 0x707070 } }, 4, 5);
+        });
+        p("splash_particle", t => { t.clearAlpha(); t.rect(7, 4, 8, 11, 0xffffff); t.set(7, 12, 0xd8e8ff); });
+        p("bubble_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 3.5, 0xffffff); t.disc(7.5, 7.5, 2.4, 0xa8c8e8); t.set(6, 6, 0xffffff); });
+        p("snow_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 2, 0xffffff); });
+        p("petal_particle", t => { t.clearAlpha(); t.disc(7, 7, 2.2, 0xf0b8d0); t.set(8, 6, 0xf8d8e4); t.set(6, 8, 0xe8a0c0); });
+        p("note_particle", t =>
+        {
+            t.clearAlpha();
+            t.px(new[] { "..##", "..##", "..#.", "..#.", "###.", "###." }, new Dictionary<char, int> { { '#', 0xffffff } }, 6, 4);
+        });
+        p("redstone_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 2.6, 0xffffff); });
+        p("soul_particle", t => { t.clearAlpha(); t.disc(7.5, 6.5, 3, 0xffffff); t.rect(5, 8, 10, 11, 0xffffff); t.set(6, 6, 0x80f0f0); t.set(9, 6, 0x80f0f0); });
+        p("enchant_particle", t =>
+        {
+            t.clearAlpha();
+            t.px(new[] { "#.#", ".#.", "#.#" }, new Dictionary<char, int> { { '#', 0xffffff } }, 6, 6);
+        });
+        p("slime_particle", t => { t.clearAlpha(); t.disc(7.5, 7.5, 3.4, 0xffffff); t.disc(6.5, 6.5, 1.2, 0xd8f8d0); });
+        p("sweep_particle", t =>
+        {
+            t.clearAlpha();
+            for (int x = 1; x < 15; x++)
+            {
+                int y = (int)Math.Floor(8 - Math.Sin((double)x / 14 * Math.PI) * 5);
+                t.set(x, y, 0xffffff);
+                t.set(x, y + 1, 0xe8e8e8, 180);
+            }
+        });
+    }
+}

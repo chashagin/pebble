@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>PebbleCore</RootNamespace>
+    <!-- Deterministic float math: RyuJIT x64 uses SSE2 scalar doubles and never
+         auto-contracts a*b+c into an FMA, matching the Swift/LLVM golden baselines.
+         Ported math must never call Math.FusedMultiplyAdd. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>
